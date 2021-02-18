@@ -138,4 +138,4 @@ class CULane(Dataset):
         return img, seg, mask, af
 
     def __len__(self):
-        return 300#len(self.img_list)
+        return len(self.img_list)
