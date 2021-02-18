@@ -11,7 +11,7 @@ from sklearn.metrics import accuracy_score, f1_score
 import torch
 from torch.utils.data import DataLoader
 
-from datasets.tusimple import TuSimple
+from datasets.tusimple import TuSimple, get_lanes_tusimple
 from models.dla.pose_dla_dcn import get_pose_net
 from utils.affinity_fields import decodeAFs
 from utils.metrics import match_multi_class, LaneEval
@@ -63,36 +63,6 @@ test_loader = DataLoader(TuSimple(args.dataset_dir, 'test', False), **kwargs)
 f_log = open(os.path.join(args.output_dir, "logs.txt"), "w")
 
 
-def coord_op_to_ip(x, y, scale):
-    # (160*scale, 88*scale) --> (160*scale, 88*scale+16=720) --> (1280, 720)
-    if x is not None:
-        x = int(scale*x)
-    if y is not None:
-        y = int(scale*y+16)
-    return x, y
-
-def coord_ip_to_op(x, y, scale):
-    # (1280, 720) --> (1280, 720-16=704) --> (1280/scale, 704/scale)
-    if x is not None:
-        x = int(x/scale)
-    if y is not None:
-        y = int((y-16)/scale)
-    return x, y
-
-def get_lanes_tusimple(seg_out, h_samples, target_ids):
-    lanes = [[] for t_id in target_ids]
-    for y_ip in h_samples:
-        _, y_op = coord_ip_to_op(None, y_ip, test_loader.dataset.samp_factor)
-        for idx, t_id in enumerate(target_ids):
-            x_op = np.where(seg_out[y_op, :] == t_id)[0]
-            if x_op.size > 0:
-                x_op = np.mean(x_op)
-                x_ip, _ = coord_op_to_ip(x_op, None, test_loader.dataset.samp_factor)
-            else:
-                x_ip = -2
-            lanes[idx].append(x_ip)
-    return lanes
-
 # test function
 def test(net):
     net.eval()
@@ -100,19 +70,19 @@ def test(net):
     json_pred = [json.loads(line) for line in open(os.path.join(args.dataset_dir, 'test_baseline.json')).readlines()]
 
     for b_idx, sample in enumerate(test_loader):
+        input_img, input_seg, input_mask, input_af = sample
         if args.cuda:
-            sample['img'] = sample['img'].cuda()
-            sample['seg'] = sample['seg'].cuda()
-            sample['mask'] = sample['mask'].cuda()
-            sample['vaf'] = sample['vaf'].cuda()
-            sample['haf'] = sample['haf'].cuda()
+            input_img = input_img.cuda()
+            input_seg = input_seg.cuda()
+            input_mask = input_mask.cuda()
+            input_af = input_af.cuda()
 
         st_time = datetime.now()
         # do the forward pass
-        outputs = net(sample['img'])[-1]
+        outputs = net(input_img)[-1]
 
         # convert to arrays
-        img = tensor2image(sample['img'].detach(), np.array(test_loader.dataset.mean), 
+        img = tensor2image(input_img.detach(), np.array(test_loader.dataset.mean), 
             np.array(test_loader.dataset.std))
         mask_out = tensor2image(torch.sigmoid(outputs['hm']).repeat(1, 3, 1, 1).detach(), 
             np.array([0.0 for _ in range(3)], dtype='float32'), np.array([1.0 for _ in range(3)], dtype='float32'))
@@ -124,11 +94,11 @@ def test(net):
         ed_time = datetime.now()
 
         # re-assign lane IDs to match with ground truth
-        seg_out, target_ids = match_multi_class(seg_out.astype(np.int64), sample['seg'][0, 0, :, :].detach().cpu().numpy().astype(np.int64))
+        seg_out = match_multi_class(seg_out.astype(np.int64), input_seg[0, 0, :, :].detach().cpu().numpy().astype(np.int64))
 
         # fill results in output structure
         json_pred[b_idx]['run_time'] = (ed_time - st_time).total_seconds()*1000.
-        json_pred[b_idx]['lanes'] = get_lanes_tusimple(seg_out, json_pred[b_idx]['h_samples'], target_ids)
+        json_pred[b_idx]['lanes'] = get_lanes_tusimple(seg_out, json_pred[b_idx]['h_samples'], test_loader.dataset.samp_factor)
 
         # write results to file
         with open(os.path.join(args.output_dir, 'outputs.json'), 'a') as f:
