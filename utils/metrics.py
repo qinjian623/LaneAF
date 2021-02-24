@@ -101,9 +101,9 @@ def match_multi_class(pred, target):
 
     # return input array if no lane points in prediction/target
     if pred_ids.size == 0:
-        return pred, target_ids.tolist()
+        return pred
     if target_ids.size == 0:
-        return pred, target_ids.tolist()
+        return pred
 
     assigned = [False for _ in range(pred_ids.size)] # keep track of which ids have been asssigned
 
