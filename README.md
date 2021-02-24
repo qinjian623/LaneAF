@@ -96,6 +96,6 @@ Config files, logs, results and snapshots from running the above scripts will be
 Trained LaneAF models can be run on the CULane test set as follows:
 ```shell
 source activate laneaf # activate virtual environment
-python infer_culane.py --dataset-dir=/path/to/CULane/ --snapshot=/path/to/trained/model/snapshot
+python infer_culane.py --dataset-dir=/path/to/CULane/ --snapshot=/path/to/trained/model/snapshot --save-viz
 source deactivate # exit virtual environment
 ```

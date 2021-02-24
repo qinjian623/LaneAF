@@ -105,6 +105,7 @@ def test(net):
             json.dump(json_pred[b_idx], f)
             f.write('\n')
 
+        # create video visualization
         if args.save_viz:
             img_out = create_viz(img, seg_out.astype(np.uint8), mask_out, vaf_out, haf_out)
 

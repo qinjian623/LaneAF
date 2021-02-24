@@ -35,6 +35,7 @@ def coord_ip_to_op(x, y, scale):
     return x, y
 
 def get_lanes_tusimple(seg_out, h_samples, samp_factor):
+    # fit cubic spline to each lane
     cs = []
     lane_ids = np.unique(seg_out[seg_out > 0])
     for idx, t_id in enumerate(lane_ids):
@@ -50,6 +51,7 @@ def get_lanes_tusimple(seg_out, h_samples, samp_factor):
             cs.append(CubicSpline(ys, xs, extrapolate=False))
         else:
             cs.append(None)
+    # get x-coordinates from fitted spline
     lanes = [[] for t_id in lane_ids]
     for idx, t_id in enumerate(lane_ids):
         if cs[idx] is not None:

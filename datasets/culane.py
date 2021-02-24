@@ -36,7 +36,9 @@ def coord_ip_to_op(x, y, scale):
         y = int((y-14)/scale)
     return x, y
 
-def get_lanes_culane(seg_out, h_samples, samp_factor):
+def get_lanes_culane(seg_out, samp_factor):
+    # fit cubic spline to each lane
+    h_samples = range(589, 240, -10)
     cs = []
     lane_ids = np.unique(seg_out[seg_out > 0])
     for idx, t_id in enumerate(lane_ids):
@@ -52,15 +54,22 @@ def get_lanes_culane(seg_out, h_samples, samp_factor):
             cs.append(CubicSpline(ys, xs, extrapolate=False))
         else:
             cs.append(None)
-    lanes = [[] for t_id in lane_ids]
+    # get x-coordinates from fitted spline
+    lanes, lane = [], []
     for idx, t_id in enumerate(lane_ids):
         if cs[idx] is not None:
-            x_out = cs[idx](np.array(h_samples))
-            x_out[np.isnan(x_out)] = -2
-            lanes[idx] = x_out.tolist()
+            y_out = np.array(h_samples)
+            x_out = cs[idx](y_out)
+            for _x, _y in zip(x_out, y_out):
+                if np.isnan(_x):
+                    continue
+                else:
+                    lane += [_x, _y]
         else:
-            lanes[idx] = [-2 for _ in h_samples]
             print("Lane completely missed!")
+        if len(lane) <= 5:
+            lane = []
+        lanes.append(lane)
     return lanes
 
 class CULane(Dataset):

@@ -14,7 +14,7 @@ from torch.utils.data import DataLoader
 from datasets.culane import CULane, get_lanes_culane
 from models.dla.pose_dla_dcn import get_pose_net
 from utils.affinity_fields import decodeAFs
-from utils.metrics import match_multi_class, LaneEval
+from utils.metrics import match_multi_class
 from utils.visualize import tensor2image, create_viz
 
 
@@ -62,12 +62,16 @@ test_loader = DataLoader(CULane(args.dataset_dir, 'test', False), **kwargs)
 # create file handles
 f_log = open(os.path.join(args.output_dir, "logs.txt"), "w")
 
+# get test set filenames
+with open(os.path.join(args.dataset_dir, "list", "test.txt")) as f:
+    filenames = f.readlines()
+filenames = [x.strip() for x in filenames] 
+
 
 # test function
 def test(net):
     net.eval()
     out_vid = None
-    json_pred = [json.loads(line) for line in open(os.path.join(args.dataset_dir, 'test_baseline.json')).readlines()]
 
     for b_idx, sample in enumerate(test_loader):
         input_img, input_seg, input_mask, input_af = sample
@@ -77,7 +81,6 @@ def test(net):
             input_mask = input_mask.cuda()
             input_af = input_af.cuda()
 
-        st_time = datetime.now()
         # do the forward pass
         outputs = net(input_img)[-1]
 
@@ -91,20 +94,20 @@ def test(net):
 
         # decode AFs to get lane instances
         seg_out = decodeAFs(mask_out[:, :, 0], vaf_out, haf_out, fg_thresh=128, err_thresh=10)
-        ed_time = datetime.now()
 
         # re-assign lane IDs to match with ground truth
         seg_out = match_multi_class(seg_out.astype(np.int64), input_seg[0, 0, :, :].detach().cpu().numpy().astype(np.int64))
 
-        # fill results in output structure
-        json_pred[b_idx]['run_time'] = (ed_time - st_time).total_seconds()*1000.
-        json_pred[b_idx]['lanes'] = get_lanes_culane(seg_out, json_pred[b_idx]['h_samples'], test_loader.dataset.samp_factor)
+        # get results in output structure
+        xy_coords = get_lanes_culane(seg_out, test_loader.dataset.samp_factor)
 
         # write results to file
-        with open(os.path.join(args.output_dir, 'outputs.json'), 'a') as f:
-            json.dump(json_pred[b_idx], f)
-            f.write('\n')
+        if not os.path.exists(os.path.join(args.output_dir, 'outputs', os.path.dirname(filenames[b_idx][1:]))):
+            os.makedirs(os.path.join(args.output_dir, 'outputs', os.path.dirname(filenames[b_idx][1:])))
+        with open(os.path.join(args.output_dir, 'outputs', filenames[b_idx][1:-3]+'lines.txt'), 'w') as f:
+            f.write('\n'.join(' '.join(map(str, _lane)) for _lane in xy_coords))
 
+        # create video visualization
         if args.save_viz:
             img_out = create_viz(img, seg_out.astype(np.uint8), mask_out, vaf_out, haf_out)
 
@@ -114,11 +117,6 @@ def test(net):
             out_vid.write(img_out)
 
         print('Done with image {} out of {}...'.format(min(args.batch_size*(b_idx+1), len(test_loader.dataset)), len(test_loader.dataset)))
-
-    # benchmark on CULane
-    results = LaneEval.bench_one_submit(os.path.join(args.output_dir, 'outputs.json'), os.path.join(args.dataset_dir, 'test_label.json'))
-    with open(os.path.join(args.output_dir, 'results.json'), 'w') as f:
-        json.dump(results, f)
 
     if args.save_viz:
         out_vid.release()
