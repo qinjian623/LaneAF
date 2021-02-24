@@ -55,8 +55,9 @@ def get_lanes_culane(seg_out, samp_factor):
         else:
             cs.append(None)
     # get x-coordinates from fitted spline
-    lanes, lane = [], []
+    lanes = []
     for idx, t_id in enumerate(lane_ids):
+        lane = []
         if cs[idx] is not None:
             y_out = np.array(h_samples)
             x_out = cs[idx](y_out)
