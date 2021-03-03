@@ -1,6 +1,5 @@
 import cv2
 import numpy as np
-from scipy.spatial.distance import cdist
 import matplotlib.pyplot as plt
 
 
@@ -108,13 +107,10 @@ def decodeAFs(BW, VAF, HAF, fg_thresh=128, err_thresh=10, viz=False):
         # parse vertically
         # assign existing lanes
         assigned = [False for _ in clusters]
-        for idx, pts in enumerate(lane_end_pts): # for each end point in an active lane
-            min_error = 1e14
-            min_cluster_id = 0
+        C = np.Inf*np.ones((len(lane_end_pts), len(clusters)), dtype=np.float64)
+        for r, pts in enumerate(lane_end_pts): # for each end point in an active lane
             for c, cluster in enumerate(clusters):
                 if len(cluster) == 0:
-                    continue
-                if pts[0, 1] == row:
                     continue
                 # mean of current cluster
                 cluster_mean = np.array([[np.mean(cluster), row]], dtype=np.float32)
@@ -125,17 +121,18 @@ def decodeAFs(BW, VAF, HAF, fg_thresh=128, err_thresh=10, viz=False):
                 pred_points = pts + vafs*(pts[0, 1] - row)
                 # get error between prediceted cluster center and actual cluster center
                 error = np.mean(np.linalg.norm(pred_points - cluster_mean, axis=1))
-                # update lowest error
-                if error < min_error:
-                    min_error = error
-                    min_cluster_id = c
-            # if minimum error less than threshold, assign cluster to lane
-            if min_error <= err_thresh:
-                assigned[min_cluster_id] = True
-                min_cluster = clusters[min_cluster_id]
-                # update best lane match with current pixel
-                output[row, min_cluster] = idx+1
-                lane_end_pts[idx] = np.stack((np.array(min_cluster, dtype=np.float32), row*np.ones_like(min_cluster)), axis=1)
+                C[r, c] = error
+        # assign clusters to lane (in acsending order of error)
+        row_ind, col_ind = np.unravel_index(np.argsort(C, axis=None), C.shape)
+        for r, c in zip(row_ind, col_ind):
+            if C[r, c] >= err_thresh:
+                break
+            if assigned[c]:
+                continue
+            assigned[c] = True
+            # update best lane match with current pixel
+            output[row, clusters[c]] = r+1
+            lane_end_pts[r] = np.stack((np.array(clusters[c], dtype=np.float32), row*np.ones_like(clusters[c])), axis=1)
         # initialize unassigned clusters to new lanes
         for c, cluster in enumerate(clusters):
             if len(cluster) == 0:
