@@ -50,7 +50,7 @@ def get_lanes_culane(seg_out, samp_factor):
                 x_ip, y_ip = coord_op_to_ip(x_op, y_op, samp_factor)
                 xs.append(x_ip)
                 ys.append(y_ip)
-        if len(xs) >= 2:
+        if len(xs) >= 10:
             cs.append(CubicSpline(ys, xs, extrapolate=False))
         else:
             cs.append(None)
@@ -68,7 +68,7 @@ def get_lanes_culane(seg_out, samp_factor):
                     lane += [_x, _y]
         else:
             print("Lane completely missed!")
-        if len(lane) <= 5:
+        if len(lane) <= 16:
             lane = []
         lanes.append(lane)
     return lanes
