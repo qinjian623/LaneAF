@@ -22,6 +22,7 @@ parser = argparse.ArgumentParser('Options for inference with LaneAF models in Py
 parser.add_argument('--dataset-dir', type=str, default=None, help='path to dataset')
 parser.add_argument('--output-dir', type=str, default=None, help='output directory for model and logs')
 parser.add_argument('--snapshot', type=str, default=None, help='path to pre-trained model snapshot')
+parser.add_argument('--split', type=str, default='test', help='dataset split to evaluate on (train/val/test)')
 parser.add_argument('--seed', type=int, default=1, help='set seed to some constant value to reproduce experiments')
 parser.add_argument('--no-cuda', action='store_true', default=False, help='do not use cuda for training')
 parser.add_argument('--save-viz', action='store_true', default=False, help='save visualization depicting intermediate and final results')
@@ -32,6 +33,8 @@ if args.dataset_dir is None:
     assert False, 'Path to dataset not provided!'
 if args.snapshot is None:
     assert False, 'Model snapshot not provided!'
+if args.split is ['train', 'val', 'test']:
+    assert False, 'Incorrect dataset split provided!'
 
 # set batch size to 1 for visualization purposes
 args.batch_size = 1
@@ -57,17 +60,14 @@ if args.cuda:
     torch.cuda.manual_seed(args.seed)
 
 kwargs = {'batch_size': args.batch_size, 'shuffle': False, 'num_workers': 1}
-test_loader = DataLoader(TuSimple(args.dataset_dir, 'test', False), **kwargs)
-
-# create file handles
-f_log = open(os.path.join(args.output_dir, "logs.txt"), "w")
+test_loader = DataLoader(TuSimple(args.dataset_dir, args.split, False), **kwargs)
 
 
 # test function
 def test(net):
     net.eval()
     out_vid = None
-    json_pred = [json.loads(line) for line in open(os.path.join(args.dataset_dir, 'test_baseline.json')).readlines()]
+    json_pred = [json.loads(line) for line in open(os.path.join(args.dataset_dir, 'seg_label', args.split+'.json')).readlines()]
 
     for b_idx, sample in enumerate(test_loader):
         input_img, input_seg, input_mask, input_af = sample
@@ -98,6 +98,8 @@ def test(net):
 
         # fill results in output structure
         json_pred[b_idx]['run_time'] = (ed_time - st_time).total_seconds()*1000.
+        if json_pred[b_idx]['run_time']:
+            json_pred[b_idx]['run_time'] = 200
         json_pred[b_idx]['lanes'] = get_lanes_tusimple(seg_out, json_pred[b_idx]['h_samples'], test_loader.dataset.samp_factor)
 
         # write results to file
@@ -117,7 +119,7 @@ def test(net):
         print('Done with image {} out of {}...'.format(min(args.batch_size*(b_idx+1), len(test_loader.dataset)), len(test_loader.dataset)))
 
     # benchmark on TuSimple
-    results = LaneEval.bench_one_submit(os.path.join(args.output_dir, 'outputs.json'), os.path.join(args.dataset_dir, 'test_label.json'))
+    results = LaneEval.bench_one_submit(os.path.join(args.output_dir, 'outputs.json'), os.path.join(args.dataset_dir, 'seg_label', args.split+'.json'))
     with open(os.path.join(args.output_dir, 'results.json'), 'w') as f:
         json.dump(results, f)
 
