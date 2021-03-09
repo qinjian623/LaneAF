@@ -69,7 +69,7 @@ def get_lanes_culane(seg_out, samp_factor):
         else:
             print("Lane completely missed!")
         if len(lane) <= 16:
-            lane = []
+            continue
         lanes.append(lane)
     return lanes
 
