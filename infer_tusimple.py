@@ -82,19 +82,14 @@ def test(net):
         outputs = net(input_img)[-1]
 
         # convert to arrays
-        img = tensor2image(input_img.detach(), np.array(test_loader.dataset.mean), 
-            np.array(test_loader.dataset.std))
-        mask_out = tensor2image(torch.sigmoid(outputs['hm']).repeat(1, 3, 1, 1).detach(), 
-            np.array([0.0 for _ in range(3)], dtype='float32'), np.array([1.0 for _ in range(3)], dtype='float32'))
-        vaf_out = np.transpose(outputs['vaf'][0, :, :, :].detach().cpu().float().numpy(), (1, 2, 0))
-        haf_out = np.transpose(outputs['haf'][0, :, :, :].detach().cpu().float().numpy(), (1, 2, 0))
+        #img = tensor2image(input_img.detach(), np.array(test_loader.dataset.mean), 
+        #    np.array(test_loader.dataset.std))
+        #mask_out = tensor2image(torch.sigmoid(outputs['hm']).repeat(1, 3, 1, 1).detach(), 
+        #    np.array([0.0 for _ in range(3)], dtype='float32'), np.array([1.0 for _ in range(3)], dtype='float32'))
 
-        # decode AFs to get lane instances
-        seg_out = decodeAFs(mask_out[:, :, 0], vaf_out, haf_out, fg_thresh=128, err_thresh=10)
+        seg_out = torch.argmax(outputs['hm'], dim=1).detach().cpu().numpy() # (1, H, W)
+        seg_out = seg_out[0, :, :]
         ed_time = datetime.now()
-
-        # re-assign lane IDs to match with ground truth
-        seg_out = match_multi_class(seg_out.astype(np.int64), input_seg[0, 0, :, :].detach().cpu().numpy().astype(np.int64))
 
         # fill results in output structure
         json_pred[b_idx]['run_time'] = (ed_time - st_time).total_seconds()*1000.
@@ -108,13 +103,13 @@ def test(net):
             f.write('\n')
 
         # create video visualization
-        if args.save_viz:
-            img_out = create_viz(img, seg_out.astype(np.uint8), mask_out, vaf_out, haf_out)
-
-            if out_vid is None:
-                out_vid = cv2.VideoWriter(os.path.join(args.output_dir, 'out.mkv'), 
-                    cv2.VideoWriter_fourcc(*'H264'), 5, (img_out.shape[1], img_out.shape[0]))
-            out_vid.write(img_out)
+        #if args.save_viz:
+        #    img_out = create_viz(img, seg_out.astype(np.uint8), mask_out, vaf_out, haf_out)
+        # 
+        #    if out_vid is None:
+        #        out_vid = cv2.VideoWriter(os.path.join(args.output_dir, 'out.mkv'), 
+        #            cv2.VideoWriter_fourcc(*'H264'), 5, (img_out.shape[1], img_out.shape[0]))
+        #    out_vid.write(img_out)
 
         print('Done with image {} out of {}...'.format(min(args.batch_size*(b_idx+1), len(test_loader.dataset)), len(test_loader.dataset)))
 
@@ -129,7 +124,7 @@ def test(net):
     return
 
 if __name__ == "__main__":
-    heads = {'hm': 1, 'vaf': 2, 'haf': 1}
+    heads = {'hm': 5}
     model = get_pose_net(num_layers=34, heads=heads, head_conv=256, down_ratio=4)
 
     model.load_state_dict(torch.load(args.snapshot), strict=True)

@@ -28,7 +28,6 @@ parser.add_argument('--batch-size', type=int, default=2, metavar='N', help='batc
 parser.add_argument('--epochs', type=int, default=60, metavar='N', help='number of epochs to train for')
 parser.add_argument('--learning-rate', type=float, default=1e-4, metavar='LR', help='learning rate')
 parser.add_argument('--weight-decay', type=float, default=1e-3, metavar='WD', help='weight decay')
-parser.add_argument('--loss-type', type=str, default='wbce', help='Type of classification loss to use (focal/bce/wbce)')
 parser.add_argument('--log-schedule', type=int, default=10, metavar='N', help='number of iterations to print/save log after')
 parser.add_argument('--seed', type=int, default=1, help='set seed to some constant value to reproduce experiments')
 parser.add_argument('--no-cuda', action='store_true', default=False, help='do not use cuda for training')
@@ -72,7 +71,7 @@ f_log = open(os.path.join(args.output_dir, "logs.txt"), "w")
 
 # training function
 def train(net, epoch):
-    epoch_loss_seg, epoch_loss_vaf, epoch_loss_haf, epoch_loss, epoch_acc, epoch_f1 = list(), list(), list(), list(), list(), list()
+    epoch_loss, epoch_acc, epoch_f1 = list(), list(), list()
     net.train()
     for b_idx, sample in enumerate(train_loader):
         input_img, input_seg, input_mask, input_af = sample
@@ -89,21 +88,16 @@ def train(net, epoch):
         outputs = net(input_img)[-1]
 
         # calculate losses and metrics
-        _mask = (input_mask != train_loader.dataset.ignore_label).float()
-        loss_seg = criterion_1(outputs['hm']*_mask, input_mask*_mask) + criterion_2(torch.sigmoid(outputs['hm']), input_mask)
-        loss_vaf = 0.5*criterion_reg(outputs['vaf'], input_af[:, :2, :, :], input_mask)
-        loss_haf = 0.5*criterion_reg(outputs['haf'], input_af[:, 2:3, :, :], input_mask)
-        pred = torch.sigmoid(outputs['hm']).detach().cpu().numpy().ravel()
-        target = input_mask.detach().cpu().numpy().ravel()
+        _mask_f = (input_seg != train_loader.dataset.ignore_label).float().repeat(1, 5, 1, 1)
+        _mask_l = (input_seg != train_loader.dataset.ignore_label).long()
+        loss = criterion_1(outputs['hm']*_mask_f, input_seg.squeeze(1)*_mask_l.squeeze(1)) #+ criterion_2(torch.sigmoid(outputs['hm']), input_mask)
+        pred = torch.argmax(outputs['hm'], dim=1).detach().cpu().numpy().ravel()
+        target = input_seg.detach().cpu().numpy().ravel()
         pred[target == train_loader.dataset.ignore_label] = 0
         target[target == train_loader.dataset.ignore_label] = 0
-        train_acc = accuracy_score((pred > 0.5).astype(np.int64), (target > 0.5).astype(np.int64))
-        train_f1 = f1_score((target > 0.5).astype(np.int64), (pred > 0.5).astype(np.int64), zero_division=1)
+        train_acc = accuracy_score(pred, target)
+        train_f1 = f1_score(pred, target, zero_division=1, average='macro')
 
-        epoch_loss_seg.append(loss_seg.item())
-        epoch_loss_vaf.append(loss_vaf.item())
-        epoch_loss_haf.append(loss_haf.item())
-        loss = loss_seg + loss_vaf + loss_haf
         epoch_loss.append(loss.item())
         epoch_acc.append(train_acc)
         epoch_f1.append(train_f1)
@@ -120,20 +114,11 @@ def train(net, epoch):
 
     scheduler.step()
     # now that the epoch is completed calculate statistics and store logs
-    avg_loss_seg = mean(epoch_loss_seg)
-    avg_loss_vaf = mean(epoch_loss_vaf)
-    avg_loss_haf = mean(epoch_loss_haf)
     avg_loss = mean(epoch_loss)
     avg_acc = mean(epoch_acc)
     avg_f1 = mean(epoch_f1)
     print("\n------------------------ Training metrics ------------------------")
     f_log.write("\n------------------------ Training metrics ------------------------\n")
-    print("Average segmentation loss for epoch = {:.2f}".format(avg_loss_seg))
-    f_log.write("Average segmentation loss for epoch = {:.2f}\n".format(avg_loss_seg))
-    print("Average VAF loss for epoch = {:.2f}".format(avg_loss_vaf))
-    f_log.write("Average VAF loss for epoch = {:.2f}\n".format(avg_loss_vaf))
-    print("Average HAF loss for epoch = {:.2f}".format(avg_loss_haf))
-    f_log.write("Average HAF loss for epoch = {:.2f}\n".format(avg_loss_haf))
     print("Average loss for epoch = {:.2f}".format(avg_loss))
     f_log.write("Average loss for epoch = {:.2f}\n".format(avg_loss))
     print("Average accuracy for epoch = {:.4f}".format(avg_acc))
@@ -143,12 +128,12 @@ def train(net, epoch):
     print("------------------------------------------------------------------\n")
     f_log.write("------------------------------------------------------------------\n\n")
     
-    return net, avg_loss_seg, avg_loss_vaf, avg_loss_haf, avg_loss, avg_acc, avg_f1
+    return net, avg_loss, avg_acc, avg_f1
 
 # validation function
 def val(net, epoch):
     global best_f1
-    epoch_loss_seg, epoch_loss_vaf, epoch_loss_haf, epoch_loss, epoch_acc, epoch_f1 = list(), list(), list(), list(), list(), list()
+    epoch_loss, epoch_acc, epoch_f1 = list(), list(), list()
     net.eval()
     
     for b_idx, sample in enumerate(val_loader):
@@ -163,21 +148,16 @@ def val(net, epoch):
         outputs = net(input_img)[-1]
 
         # calculate losses and metrics
-        _mask = (input_mask != val_loader.dataset.ignore_label).float()
-        loss_seg = criterion_1(outputs['hm'], input_mask) + criterion_2(torch.sigmoid(outputs['hm']), input_mask)
-        loss_vaf = 0.5*criterion_reg(outputs['vaf'], input_af[:, :2, :, :], input_mask)
-        loss_haf = 0.5*criterion_reg(outputs['haf'], input_af[:, 2:3, :, :], input_mask)
-        pred = torch.sigmoid(outputs['hm']).detach().cpu().numpy().ravel()
-        target = input_mask.detach().cpu().numpy().ravel()
+        _mask_f = (input_seg != train_loader.dataset.ignore_label).float().repeat(1, 5, 1, 1)
+        _mask_l = (input_seg != train_loader.dataset.ignore_label).long()
+        loss = criterion_1(outputs['hm']*_mask_f, input_seg.squeeze(1)*_mask_l.squeeze(1)) #+ criterion_2(torch.sigmoid(outputs['hm']), input_mask)
+        pred = torch.argmax(outputs['hm'], dim=1).detach().cpu().numpy().ravel()
+        target = input_seg.squeeze(1).detach().cpu().numpy().ravel()
         pred[target == val_loader.dataset.ignore_label] = 0
         target[target == val_loader.dataset.ignore_label] = 0
-        val_acc = accuracy_score((pred > 0.5).astype(np.int64), (target > 0.5).astype(np.int64))
-        val_f1 = f1_score((target > 0.5).astype(np.int64), (pred > 0.5).astype(np.int64), zero_division=1)
+        val_acc = accuracy_score(pred, target)
+        val_f1 = f1_score(pred, target, zero_division=1, average='macro')
 
-        epoch_loss_seg.append(loss_seg.item())
-        epoch_loss_vaf.append(loss_vaf.item())
-        epoch_loss_haf.append(loss_haf.item())
-        loss = loss_seg + loss_vaf + loss_haf
         epoch_loss.append(loss.item())
         epoch_acc.append(val_acc)
         epoch_f1.append(val_f1)
@@ -185,20 +165,11 @@ def val(net, epoch):
         print('Done with image {} out of {}...'.format(min(args.batch_size*(b_idx+1), len(val_loader.dataset)), len(val_loader.dataset)))
 
     # now that the epoch is completed calculate statistics and store logs
-    avg_loss_seg = mean(epoch_loss_seg)
-    avg_loss_vaf = mean(epoch_loss_vaf)
-    avg_loss_haf = mean(epoch_loss_haf)
     avg_loss = mean(epoch_loss)
     avg_acc = mean(epoch_acc)
     avg_f1 = mean(epoch_f1)
     print("\n------------------------ Validation metrics ------------------------")
     f_log.write("\n------------------------ Validation metrics ------------------------\n")
-    print("Average segmentation loss for epoch = {:.2f}".format(avg_loss_seg))
-    f_log.write("Average segmentation loss for epoch = {:.2f}\n".format(avg_loss_seg))
-    print("Average VAF loss for epoch = {:.2f}".format(avg_loss_vaf))
-    f_log.write("Average VAF loss for epoch = {:.2f}\n".format(avg_loss_vaf))
-    print("Average HAF loss for epoch = {:.2f}".format(avg_loss_haf))
-    f_log.write("Average HAF loss for epoch = {:.2f}\n".format(avg_loss_haf))
     print("Average loss for epoch = {:.2f}".format(avg_loss))
     f_log.write("Average loss for epoch = {:.2f}\n".format(avg_loss))
     print("Average accuracy for epoch = {:.4f}".format(avg_acc))
@@ -214,10 +185,10 @@ def val(net, epoch):
         torch.save(model.state_dict(), os.path.join(args.output_dir, 'net_' + '%.4d' % (epoch,) + '.pth'))
         best_f1 = avg_f1
 
-    return avg_loss_seg, avg_loss_vaf, avg_loss_haf, avg_loss, avg_acc, avg_f1
+    return avg_loss, avg_acc, avg_f1
 
 if __name__ == "__main__":
-    heads = {'hm': 1, 'vaf': 2, 'haf': 1}
+    heads = {'hm': 5}
     model = get_pose_net(num_layers=34, heads=heads, head_conv=256, down_ratio=4)
 
     if args.snapshot is not None:
@@ -231,36 +202,24 @@ if __name__ == "__main__":
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.2)
 
     # BCE(Focal) loss applied to each pixel individually
-    model.hm[2].bias.data.uniform_(-4.595, -4.595) # bias towards negative class
-    if args.loss_type == 'focal':
-        criterion_1 = FocalLoss(gamma=2.0, alpha=0.25, size_average=True)
-    elif args.loss_type == 'bce':
-        ## BCE weight
-        criterion_1 = torch.nn.BCEWithLogitsLoss()
-    elif args.loss_type == 'wbce':
-        ## BCE weight
-        criterion_1 = torch.nn.BCEWithLogitsLoss(pos_weight=torch.tensor([9.6]).cuda())
+    weights = [1.0 for _ in range(5)]
+    weights[0] = 0.4
+    class_weights = torch.FloatTensor(weights).cuda()
+    criterion_1 = torch.nn.CrossEntropyLoss(weight=class_weights)
     criterion_2 = IoULoss()
-    criterion_reg = RegL1Loss()
 
     # set up figures and axes
     fig1, ax1 = plt.subplots()
     plt.grid(True)
-    ax1.plot([], 'r', label='Training segmentation loss')
-    ax1.plot([], 'g', label='Training VAF loss')
-    ax1.plot([], 'b', label='Training HAF loss')
     ax1.plot([], 'k', label='Training total loss')
     ax1.legend()
-    train_loss_seg, train_loss_vaf, train_loss_haf, train_loss = list(), list(), list(), list()
+    train_loss = list()
 
     fig2, ax2 = plt.subplots()
     plt.grid(True)
-    ax2.plot([], 'r', label='Validation segmentation loss')
-    ax2.plot([], 'g', label='Validation VAF loss')
-    ax2.plot([], 'b', label='Validation HAF loss')
     ax2.plot([], 'k', label='Validation total loss')
     ax2.legend()
-    val_loss_seg, val_loss_vaf, val_loss_haf, val_loss = list(), list(), list(), list()
+    val_loss = list()
 
     fig3, ax3 = plt.subplots()
     plt.grid(True)
@@ -274,32 +233,20 @@ if __name__ == "__main__":
     # trainval loop
     for i in range(1, args.epochs + 1):
         # training epoch
-        model, avg_loss_seg, avg_loss_vaf, avg_loss_haf, avg_loss, avg_acc, avg_f1 = train(model, i)
-        train_loss_seg.append(avg_loss_seg)
-        train_loss_vaf.append(avg_loss_vaf)
-        train_loss_haf.append(avg_loss_haf)
+        model, avg_loss, avg_acc, avg_f1 = train(model, i)
         train_loss.append(avg_loss)
         train_acc.append(avg_acc)
         train_f1.append(avg_f1)
         # plot training loss
-        ax1.plot(train_loss_seg, 'r', label='Training segmentation loss')
-        ax1.plot(train_loss_vaf, 'g', label='Training VAF loss')
-        ax1.plot(train_loss_haf, 'b', label='Training HAF loss')
         ax1.plot(train_loss, 'k', label='Training total loss')
         fig1.savefig(os.path.join(args.output_dir, "train_loss.jpg"))
 
         # validation epoch
-        avg_loss_seg, avg_loss_vaf, avg_loss_haf, avg_loss, avg_acc, avg_f1 = val(model, i)
-        val_loss_seg.append(avg_loss_seg)
-        val_loss_vaf.append(avg_loss_vaf)
-        val_loss_haf.append(avg_loss_haf)
+        avg_loss, avg_acc, avg_f1 = val(model, i)
         val_loss.append(avg_loss)
         val_acc.append(avg_acc)
         val_f1.append(avg_f1)
         # plot validation loss
-        ax2.plot(val_loss_seg, 'r', label='Validation segmentation loss')
-        ax2.plot(val_loss_vaf, 'g', label='Validation VAF loss')
-        ax2.plot(val_loss_haf, 'b', label='Validation HAF loss')
         ax2.plot(val_loss, 'k', label='Validation total loss')
         fig2.savefig(os.path.join(args.output_dir, "val_loss.jpg"))
 
