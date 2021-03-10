@@ -89,8 +89,11 @@ def train(net, epoch):
 
         # calculate losses and metrics
         _mask_f = (input_seg != train_loader.dataset.ignore_label).float().repeat(1, 5, 1, 1)
-        _mask_l = (input_seg != train_loader.dataset.ignore_label).long()
-        loss = criterion_1(outputs['hm']*_mask_f, input_seg.squeeze(1)*_mask_l.squeeze(1)) #+ criterion_2(torch.sigmoid(outputs['hm']), input_mask)
+        _one_hot_mask = input_seg.clone()
+        _one_hot_mask = F.one_hot(_one_hot_mask.squeeze(1).unsqueeze(3), num_classes=256).squeeze(3)
+        _one_hot_mask = _one_hot_mask[..., :5].float()
+        loss = criterion_1(outputs['hm'], input_seg.squeeze(1)) \
+               + criterion_2(torch.softmax(outputs['hm'], dim=1)*_mask_f, _one_hot_mask.permute(0, 3, 1, 2))
         pred = torch.argmax(outputs['hm'], dim=1).detach().cpu().numpy().ravel()
         target = input_seg.detach().cpu().numpy().ravel()
         pred[target == train_loader.dataset.ignore_label] = 0
@@ -149,8 +152,11 @@ def val(net, epoch):
 
         # calculate losses and metrics
         _mask_f = (input_seg != train_loader.dataset.ignore_label).float().repeat(1, 5, 1, 1)
-        _mask_l = (input_seg != train_loader.dataset.ignore_label).long()
-        loss = criterion_1(outputs['hm']*_mask_f, input_seg.squeeze(1)*_mask_l.squeeze(1)) #+ criterion_2(torch.sigmoid(outputs['hm']), input_mask)
+        _one_hot_mask = input_seg.clone()
+        _one_hot_mask = F.one_hot(_one_hot_mask.squeeze(1).unsqueeze(3), num_classes=256).squeeze(3)
+        _one_hot_mask = _one_hot_mask[..., :5].float()
+        loss = criterion_1(outputs['hm'], input_seg.squeeze(1)) \
+               + criterion_2(torch.softmax(outputs['hm'], dim=1)*_mask_f, _one_hot_mask.permute(0, 3, 1, 2))
         pred = torch.argmax(outputs['hm'], dim=1).detach().cpu().numpy().ravel()
         target = input_seg.squeeze(1).detach().cpu().numpy().ravel()
         pred[target == val_loader.dataset.ignore_label] = 0
@@ -205,7 +211,7 @@ if __name__ == "__main__":
     weights = [1.0 for _ in range(5)]
     weights[0] = 0.4
     class_weights = torch.FloatTensor(weights).cuda()
-    criterion_1 = torch.nn.CrossEntropyLoss(weight=class_weights)
+    criterion_1 = torch.nn.CrossEntropyLoss(weight=class_weights, ignore_index=train_loader.dataset.ignore_label)
     criterion_2 = IoULoss()
 
     # set up figures and axes
