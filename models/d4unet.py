@@ -39,9 +39,19 @@ class D4UNet(nn.Module):
 
         self.adapter = D4UNet._block(features * 4, features, name="ada")
 
-        self.conv = nn.Conv2d(
-            in_channels=features, out_channels=out_channels, kernel_size=1
-        )
+        self.heads = {"hm": 1, "haf": 1, "vaf": 2}
+        for head in self.heads:
+            classes = self.heads[head]
+            fc = nn.Conv2d(features, classes,
+                           kernel_size=1, stride=1, bias=True)
+            self.__setattr__(head, fc)
+
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            elif isinstance(m, (nn.BatchNorm2d, nn.GroupNorm)):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
 
     def forward(self, x):
         enc1 = self.encoder1(x)
@@ -57,13 +67,18 @@ class D4UNet(nn.Module):
         dec3 = self.upconv3(dec4)  # /4
         dec3 = torch.cat((dec3, enc3), dim=1)
         dec3 = self.decoder3(dec3)
+
+        feat = self.adapter(dec3)
         # dec2 = self.upconv2(dec3)
         # dec2 = torch.cat((dec2, enc2), dim=1)
         # dec2 = self.decoder2(dec2)
         # dec1 = self.upconv1(dec2)
         # dec1 = torch.cat((dec1, enc1), dim=1)
         # dec1 = self.decoder1(dec1)
-        return torch.sigmoid(self.conv(self.adapter(dec3)))
+        z = {}
+        for head in self.heads:
+            z[head] = self.__getattr__(head)(feat)
+        return z
 
     @staticmethod
     def _block(in_channels, features, name):
@@ -102,4 +117,7 @@ class D4UNet(nn.Module):
 if __name__ == '__main__':
     u = D4UNet(in_channels=3, out_channels=3, init_features=32)
     p = torch.rand(1, 3, 512, 512)
-    print(u(p).shape)
+    r = u(p)
+
+    for k, v in r.items():
+        print(k, v.shape)
