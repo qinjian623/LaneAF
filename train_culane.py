@@ -26,7 +26,7 @@ parser.add_argument('--output-dir', type=str, default=None, help='output directo
 parser.add_argument('--snapshot', type=str, default=None, help='path to pre-trained model snapshot')
 parser.add_argument('--batch-size', type=int, default=2, metavar='N', help='batch size for training')
 parser.add_argument('--epochs', type=int, default=60, metavar='N', help='number of epochs to train for')
-parser.add_argument('--learning-rate', type=float, default=1e-4, metavar='LR', help='learning rate')
+parser.add_argument('--learning-rate', type=float, default=1e-3, metavar='LR', help='learning rate')
 parser.add_argument('--weight-decay', type=float, default=1e-3, metavar='WD', help='weight decay')
 parser.add_argument('--loss-type', type=str, default='wbce', help='Type of classification loss to use (focal/bce/wbce)')
 parser.add_argument('--log-schedule', type=int, default=10, metavar='N', help='number of iterations to print/save log after')
@@ -112,9 +112,9 @@ def train(net, epoch):
         loss.backward()
         optimizer.step()
         if b_idx % args.log_schedule == 0:
-            print('Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}\tF1-score: {:.4f}'.format(
+            print('Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}\tF1-score: {:.4f} \tSegloss: {:.4f}'.format(
                 epoch, (b_idx+1) * args.batch_size, len(train_loader.dataset),
-                100. * (b_idx+1) * args.batch_size / len(train_loader.dataset), loss.item(), train_f1))
+                100. * (b_idx+1) * args.batch_size / len(train_loader.dataset), loss.item(), train_f1, loss_seg.item()))
             f_log.write('Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}\tF1-score: {:.4f}\n'.format(
                 epoch, (b_idx+1) * args.batch_size, len(train_loader.dataset),
                 100. * (b_idx+1) * args.batch_size / len(train_loader.dataset), loss.item(), train_f1))
@@ -235,7 +235,7 @@ if __name__ == "__main__":
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.2)
 
     # BCE(Focal) loss applied to each pixel individually
-    model.hm[2].bias.data.uniform_(-4.595, -4.595) # bias towards negative class
+    # model.hm[2].bias.data.uniform_(-4.595, -4.595) # bias towards negative class
     if args.loss_type == 'focal':
         criterion_1 = FocalLoss(gamma=2.0, alpha=0.25, size_average=True)
     elif args.loss_type == 'bce':

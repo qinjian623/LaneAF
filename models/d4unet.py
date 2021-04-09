@@ -78,7 +78,7 @@ class D4UNet(nn.Module):
         z = {}
         for head in self.heads:
             z[head] = self.__getattr__(head)(feat)
-        return z
+        return [z]
 
     @staticmethod
     def _block(in_channels, features, name):

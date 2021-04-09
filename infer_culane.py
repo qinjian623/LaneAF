@@ -35,7 +35,7 @@ if args.snapshot is None:
     assert False, 'Model snapshot not provided!'
 
 # set batch size to 1 for visualization purposes
-args.batch_size = 32
+args.batch_size = 1
 
 # setup args
 args.cuda = not args.no_cuda and torch.cuda.is_available()
@@ -59,7 +59,7 @@ if args.cuda:
 
 kwargs = {'batch_size': args.batch_size, 'shuffle': False, 'num_workers': 10}
 print(args.dataset_dir)
-test_loader = DataLoader(CULane(args.dataset_dir, 'test', False), **kwargs)
+test_loader = DataLoader(CULane(args.dataset_dir, 'val', False), **kwargs)
 
 # create file handles
 f_log = open(os.path.join(args.output_dir, "logs.txt"), "w")
@@ -116,7 +116,7 @@ def test(net):
             os.makedirs(os.path.join(args.output_dir, 'outputs', os.path.dirname(filenames[b_idx][1:])))
         with open(os.path.join(args.output_dir, 'outputs', filenames[b_idx][1:-3]+'lines.txt'), 'w') as f:
             f.write('\n'.join(' '.join(map(str, _lane)) for _lane in xy_coords))
-        if b_idx > 500:
+        if b_idx > 100:
             break
         # create video visualization
         if args.save_viz:
@@ -135,8 +135,9 @@ def test(net):
 
 if __name__ == "__main__":
     heads = {'hm': 1, 'vaf': 2, 'haf': 1}
-    model = get_pose_net(num_layers=34, heads=heads, head_conv=256, down_ratio=4)
-
+    # model = get_pose_net(num_layers=34, heads=heads, head_conv=256, down_ratio=4)
+    from models.d4unet import D4UNet
+    model = D4UNet()
     model.load_state_dict(torch.load(args.snapshot), strict=True)
     if args.cuda:
         model.cuda()
