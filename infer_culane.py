@@ -1,5 +1,6 @@
 import os
 import json
+import time
 from datetime import datetime
 from statistics import mean
 import argparse
@@ -34,7 +35,7 @@ if args.snapshot is None:
     assert False, 'Model snapshot not provided!'
 
 # set batch size to 1 for visualization purposes
-args.batch_size = 1
+args.batch_size = 32
 
 # setup args
 args.cuda = not args.no_cuda and torch.cuda.is_available()
@@ -56,7 +57,8 @@ torch.manual_seed(args.seed)
 if args.cuda:
     torch.cuda.manual_seed(args.seed)
 
-kwargs = {'batch_size': args.batch_size, 'shuffle': False, 'num_workers': 1}
+kwargs = {'batch_size': args.batch_size, 'shuffle': False, 'num_workers': 10}
+print(args.dataset_dir)
 test_loader = DataLoader(CULane(args.dataset_dir, 'test', False), **kwargs)
 
 # create file handles
@@ -80,10 +82,13 @@ def test(net):
             input_seg = input_seg.cuda()
             input_mask = input_mask.cuda()
             input_af = input_af.cuda()
-
+        torch.cuda.synchronize()
+        s = time.time()
         # do the forward pass
         outputs = net(input_img)[-1]
-
+        torch.cuda.synchronize()
+        e = time.time()
+        print(e - s)
         # convert to arrays
         img = tensor2image(input_img.detach(), np.array(test_loader.dataset.mean), 
             np.array(test_loader.dataset.std))
@@ -93,8 +98,13 @@ def test(net):
         haf_out = np.transpose(outputs['haf'][0, :, :, :].detach().cpu().float().numpy(), (1, 2, 0))
 
         # decode AFs to get lane instances
+        torch.cuda.synchronize()
+        s = time.time()
         seg_out = decodeAFs(mask_out[:, :, 0], vaf_out, haf_out, fg_thresh=128, err_thresh=5)
 
+        torch.cuda.synchronize()
+        e = time.time()
+        print(e - s)
         # re-assign lane IDs to match with ground truth
         seg_out = match_multi_class(seg_out.astype(np.int64), input_seg[0, 0, :, :].detach().cpu().numpy().astype(np.int64))
 
@@ -106,16 +116,16 @@ def test(net):
             os.makedirs(os.path.join(args.output_dir, 'outputs', os.path.dirname(filenames[b_idx][1:])))
         with open(os.path.join(args.output_dir, 'outputs', filenames[b_idx][1:-3]+'lines.txt'), 'w') as f:
             f.write('\n'.join(' '.join(map(str, _lane)) for _lane in xy_coords))
-
+        if b_idx > 500:
+            break
         # create video visualization
         if args.save_viz:
+            print("Save VIZ")
             img_out = create_viz(img, seg_out.astype(np.uint8), mask_out, vaf_out, haf_out)
-
+            cv2.imwrite("{:04d}.jpg".format(b_idx), img_out)
             if out_vid is None:
-                out_vid = cv2.VideoWriter(os.path.join(args.output_dir, 'out.mkv'), 
-                    cv2.VideoWriter_fourcc(*'H264'), 5, (img_out.shape[1], img_out.shape[0]))
+                out_vid = cv2.VideoWriter("VideoTest.avi", cv2.VideoWriter_fourcc(*'XVID'), 5.0, (1408, 1152)) 
             out_vid.write(img_out)
-
         print('Done with image {} out of {}...'.format(min(args.batch_size*(b_idx+1), len(test_loader.dataset)), len(test_loader.dataset)))
 
     if args.save_viz:

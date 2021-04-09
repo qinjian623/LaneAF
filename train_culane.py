@@ -35,6 +35,7 @@ parser.add_argument('--no-cuda', action='store_true', default=False, help='do no
 parser.add_argument('--random-transforms', action='store_true', default=False, help='apply random transforms to input during training')
 
 args = parser.parse_args()
+
 # check args
 if args.dataset_dir is None:
     assert False, 'Path to dataset not provided!'
@@ -59,9 +60,9 @@ torch.manual_seed(args.seed)
 if args.cuda:
     torch.cuda.manual_seed(args.seed)
 
-kwargs = {'batch_size': args.batch_size, 'shuffle': True, 'num_workers': 6}
+kwargs = {'batch_size': args.batch_size, 'shuffle': True, 'num_workers': 10}
 train_loader = DataLoader(CULane(args.dataset_dir, 'train', args.random_transforms), **kwargs)
-kwargs = {'batch_size': 1, 'shuffle': False, 'num_workers': 3}
+kwargs = {'batch_size': 1, 'shuffle': False, 'num_workers': 10}
 val_loader = DataLoader(CULane(args.dataset_dir, 'val', False), **kwargs)
 
 # global var to store best validation F1 score across all epochs
@@ -243,37 +244,40 @@ if __name__ == "__main__":
     criterion_2 = IoULoss()
     criterion_reg = RegL1Loss()
 
-    # set up figures and axes
-    fig1, ax1 = plt.subplots()
-    plt.grid(True)
-    ax1.plot([], 'r', label='Training segmentation loss')
-    ax1.plot([], 'g', label='Training VAF loss')
-    ax1.plot([], 'b', label='Training HAF loss')
-    ax1.plot([], 'k', label='Training total loss')
-    ax1.legend()
+    print(" set up figures and axes")
+    # fig1, ax1 = plt.subplots()
+    # plt.grid(True)
+    # ax1.plot([], 'r', label='Training segmentation loss')
+    # ax1.plot([], 'g', label='Training VAF loss')
+    # ax1.plot([], 'b', label='Training HAF loss')
+    # ax1.plot([], 'k', label='Training total loss')
+    # ax1.legend()
+    
     train_loss_seg, train_loss_vaf, train_loss_haf, train_loss = list(), list(), list(), list()
 
-    fig2, ax2 = plt.subplots()
-    plt.grid(True)
-    ax2.plot([], 'r', label='Validation segmentation loss')
-    ax2.plot([], 'g', label='Validation VAF loss')
-    ax2.plot([], 'b', label='Validation HAF loss')
-    ax2.plot([], 'k', label='Validation total loss')
-    ax2.legend()
+    # fig2, ax2 = plt.subplots()
+    # plt.grid(True)
+    # ax2.plot([], 'r', label='Validation segmentation loss')
+    # ax2.plot([], 'g', label='Validation VAF loss')
+    # ax2.plot([], 'b', label='Validation HAF loss')
+    # ax2.plot([], 'k', label='Validation total loss')
+    # ax2.legend()
     val_loss_seg, val_loss_vaf, val_loss_haf, val_loss = list(), list(), list(), list()
 
-    fig3, ax3 = plt.subplots()
-    plt.grid(True)
-    ax3.plot([], 'r', label='Training accuracy')
-    ax3.plot([], 'g', label='Validation accuracy')
-    ax3.plot([], 'b', label='Training F1 score')
-    ax3.plot([], 'k', label='Validation F1 score')
-    ax3.legend()
+    # fig3, ax3 = plt.subplots()
+    # plt.grid(True)
+    # ax3.plot([], 'r', label='Training accuracy')
+    # ax3.plot([], 'g', label='Validation accuracy')
+    # ax3.plot([], 'b', label='Training F1 score')
+    # ax3.plot([], 'k', label='Validation F1 score')
+    # ax3.legend()
     train_acc, val_acc, train_f1, val_f1 = list(), list(), list(), list()
 
+    print("Training...")
     # trainval loop
     for i in range(1, args.epochs + 1):
         # training epoch
+        print("epoch...")
         model, avg_loss_seg, avg_loss_vaf, avg_loss_haf, avg_loss, avg_acc, avg_f1 = train(model, i)
         train_loss_seg.append(avg_loss_seg)
         train_loss_vaf.append(avg_loss_vaf)
@@ -281,34 +285,35 @@ if __name__ == "__main__":
         train_loss.append(avg_loss)
         train_acc.append(avg_acc)
         train_f1.append(avg_f1)
+        torch.save(model.state_dict(), os.path.join(args.output_dir, 'net_' + '%.4d' % (i ,) + '.pth'))
         # plot training loss
-        ax1.plot(train_loss_seg, 'r', label='Training segmentation loss')
-        ax1.plot(train_loss_vaf, 'g', label='Training VAF loss')
-        ax1.plot(train_loss_haf, 'b', label='Training HAF loss')
-        ax1.plot(train_loss, 'k', label='Training total loss')
-        fig1.savefig(os.path.join(args.output_dir, "train_loss.jpg"))
+        # ax1.plot(train_loss_seg, 'r', label='Training segmentation loss')
+        # ax1.plot(train_loss_vaf, 'g', label='Training VAF loss')
+        # ax1.plot(train_loss_haf, 'b', label='Training HAF loss')
+        # ax1.plot(train_loss, 'k', label='Training total loss')
+        # fig1.savefig(os.path.join(args.output_dir, "train_loss.jpg"))
 
         # validation epoch
-        avg_loss_seg, avg_loss_vaf, avg_loss_haf, avg_loss, avg_acc, avg_f1 = val(model, i)
-        val_loss_seg.append(avg_loss_seg)
-        val_loss_vaf.append(avg_loss_vaf)
-        val_loss_haf.append(avg_loss_haf)
-        val_loss.append(avg_loss)
-        val_acc.append(avg_acc)
-        val_f1.append(avg_f1)
+        # avg_loss_seg, avg_loss_vaf, avg_loss_haf, avg_loss, avg_acc, avg_f1 = val(model, i)
+        # val_loss_seg.append(avg_loss_seg)
+        # val_loss_vaf.append(avg_loss_vaf)
+        # val_loss_haf.append(avg_loss_haf)
+        # val_loss.append(avg_loss)
+        # val_acc.append(avg_acc)
+        # val_f1.append(avg_f1)
         # plot validation loss
-        ax2.plot(val_loss_seg, 'r', label='Validation segmentation loss')
-        ax2.plot(val_loss_vaf, 'g', label='Validation VAF loss')
-        ax2.plot(val_loss_haf, 'b', label='Validation HAF loss')
-        ax2.plot(val_loss, 'k', label='Validation total loss')
-        fig2.savefig(os.path.join(args.output_dir, "val_loss.jpg"))
+        # ax2.plot(val_loss_seg, 'r', label='Validation segmentation loss')
+        # ax2.plot(val_loss_vaf, 'g', label='Validation VAF loss')
+        # ax2.plot(val_loss_haf, 'b', label='Validation HAF loss')
+        # ax2.plot(val_loss, 'k', label='Validation total loss')
+        # fig2.savefig(os.path.join(args.output_dir, "val_loss.jpg"))
 
         # plot the train and val metrics
-        ax3.plot(train_acc, 'r', label='Train accuracy')
-        ax3.plot(val_acc, 'g', label='Validation accuracy')
-        ax3.plot(train_f1, 'b', label='Train F1 score')
-        ax3.plot(val_f1, 'k', label='Validation F1 score')
-        fig3.savefig(os.path.join(args.output_dir, 'trainval_acc_f1.jpg'))
+        # ax3.plot(train_acc, 'r', label='Train accuracy')
+        # ax3.plot(val_acc, 'g', label='Validation accuracy')
+        # ax3.plot(train_f1, 'b', label='Train F1 score')
+        # ax3.plot(val_f1, 'k', label='Validation F1 score')
+        # fig3.savefig(os.path.join(args.output_dir, 'trainval_acc_f1.jpg'))
 
     plt.close('all')
     f_log.close()

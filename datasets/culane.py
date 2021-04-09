@@ -100,8 +100,9 @@ class CULane(Dataset):
                 tf.GroupRandomScale(size=(0.5, 0.5), interpolation=(cv2.INTER_LINEAR, cv2.INTER_NEAREST)),
                 tf.GroupNormalize(mean=(self.mean, (0, )), std=(self.std, (1, ))),
             ])
-
+        print("Creating Index...")
         self.create_index()
+        print("Creating Index DONE")
 
     def create_index(self):
         self.img_list = []
@@ -114,25 +115,28 @@ class CULane(Dataset):
         with open(listfile) as f:
             for line in f:
                 l = line.strip()
-                self.img_list.append(os.path.join(self.data_dir_path, l[1:]))  # l[1:]  get rid of the first '/' so as for os.path.join
+                self.img_list.append(os.path.join(self.data_dir_path, l[0:]))  # l[1:]  get rid of the first '/' so as for os.path.join
                 if self.image_set == 'test':
-                    self.seg_list.append(os.path.join(self.data_dir_path, 'laneseg_label_w16_test', l[1:-3] + 'png'))
+                    self.seg_list.append(os.path.join(self.data_dir_path, 'laneseg_label_w16_test', l[0:-3] + 'png'))
                 else:
-                    self.seg_list.append(os.path.join(self.data_dir_path, 'laneseg_label_w16', l[1:-3] + 'png'))
+                    self.seg_list.append(os.path.join(self.data_dir_path, 'laneseg_label_w16', l[0:-3] + 'png'))
+
 
     def __getitem__(self, idx):
+        print(self.img_list[idx])
         img = cv2.imread(self.img_list[idx]).astype(np.float32)/255. # (H, W, 3)
         seg = cv2.imread(self.seg_list[idx], cv2.IMREAD_UNCHANGED) # (H, W)
         seg = np.tile(seg[..., np.newaxis], (1, 1, 3)) # (H, W, 3)
-        img = cv2.resize(img[14:, :, :], (1664, 576), interpolation=cv2.INTER_LINEAR)
-        seg = cv2.resize(seg[14:, :, :], (1664, 576), interpolation=cv2.INTER_NEAREST)
+        seg = cv2.resize(seg, (1664, 576), interpolation=cv2.INTER_NEAREST)
+        img = cv2.resize(img, (1664, 576), interpolation=cv2.INTER_LINEAR)
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         img, seg = self.transforms((img, seg))
         seg = cv2.resize(seg, None, fx=self.output_scale, fy=self.output_scale, interpolation=cv2.INTER_NEAREST)
-        # create binary mask
+        
         mask = seg[:, :, 0].copy()
         mask[seg[:, :, 0] >= 1] = 1
         mask[seg[:, :, 0] == self.ignore_label] = self.ignore_label
+        
         # create AFs
         seg_wo_ignore = seg[:, :, 0].copy()
         seg_wo_ignore[seg_wo_ignore == self.ignore_label] = 0
