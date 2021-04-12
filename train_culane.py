@@ -28,7 +28,7 @@ parser = argparse.ArgumentParser('Options for training LaneAF models in PyTorch.
 parser.add_argument('--dataset-dir', type=str, default=None, help='path to dataset')
 parser.add_argument('--output-dir', type=str, default=None, help='output directory for model and logs')
 parser.add_argument('--snapshot', type=str, default=None, help='path to pre-trained model snapshot')
-parser.add_argument('--batch-size', type=int, default=2, metavar='N', help='batch size for training')
+parser.add_argument('--batch-size', type=int, default=32, metavar='N', help='batch size for training')
 parser.add_argument('--epochs', type=int, default=60, metavar='N', help='number of epochs to train for')
 parser.add_argument('--learning-rate', type=float, default=1e-3, metavar='LR', help='learning rate')
 parser.add_argument('--weight-decay', type=float, default=1e-3, metavar='WD', help='weight decay')
@@ -40,15 +40,15 @@ parser.add_argument('--no-cuda', action='store_true', default=False, help='do no
 parser.add_argument('--random-transforms', action='store_true', default=False,
                     help='apply random transforms to input during training')
 
-parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
+parser.add_argument('-j', '--workers', default=10, type=int, metavar='N',
                     help='number of data loading workers (default: 4)')
-parser.add_argument('--world-size', default=-1, type=int,
+parser.add_argument('--world-size', default=1, type=int,
                     help='number of nodes for distributed training')
 parser.add_argument('--rank', default=-1, type=int,
                     help='node rank for distributed training')
 parser.add_argument('--dist-url', default='tcp://127.0.0.1:8848', type=str,
                     help='url used to set up distributed training')
-parser.add_argument('--dist-backend', default='nccl', type=str,
+parser.add_argument('--backend', default='nccl', type=str,
                     help='distributed backend')
 args = parser.parse_args()
 
@@ -70,11 +70,11 @@ def train(net, train_loader, criterions, optimizer, scheduler, f_log, epoch, gpu
     criterion_1, criterion_2, criterion_reg = criterions
     for b_idx, sample in enumerate(train_loader):
         input_img, input_seg, input_mask, input_af = sample
-        if args.cuda:
-            input_img = input_img.cuda()
-            input_seg = input_seg.cuda()
-            input_mask = input_mask.cuda()
-            input_af = input_af.cuda()
+
+        input_img = input_img.cuda()
+        input_seg = input_seg.cuda()
+        input_mask = input_mask.cuda()
+        input_af = input_af.cuda()
 
         # zero gradients before forward pass
         optimizer.zero_grad()
@@ -122,22 +122,23 @@ def train(net, train_loader, criterions, optimizer, scheduler, f_log, epoch, gpu
     avg_loss = mean(epoch_loss)
     avg_acc = mean(epoch_acc)
     avg_f1 = mean(epoch_f1)
-    print("\n------------------------ Training metrics ------------------------")
-    f_log.write("\n------------------------ Training metrics ------------------------\n")
-    print("Average segmentation loss for epoch = {:.2f}".format(avg_loss_seg))
-    f_log.write("Average segmentation loss for epoch = {:.2f}\n".format(avg_loss_seg))
-    print("Average VAF loss for epoch = {:.2f}".format(avg_loss_vaf))
-    f_log.write("Average VAF loss for epoch = {:.2f}\n".format(avg_loss_vaf))
-    print("Average HAF loss for epoch = {:.2f}".format(avg_loss_haf))
-    f_log.write("Average HAF loss for epoch = {:.2f}\n".format(avg_loss_haf))
-    print("Average loss for epoch = {:.2f}".format(avg_loss))
-    f_log.write("Average loss for epoch = {:.2f}\n".format(avg_loss))
-    print("Average accuracy for epoch = {:.4f}".format(avg_acc))
-    f_log.write("Average accuracy for epoch = {:.4f}\n".format(avg_acc))
-    print("Average F1 score for epoch = {:.4f}".format(avg_f1))
-    f_log.write("Average F1 score for epoch = {:.4f}\n".format(avg_f1))
-    print("------------------------------------------------------------------\n")
-    f_log.write("------------------------------------------------------------------\n\n")
+    if dist.get_rank() == 0:
+        print("\n------------------------ Training metrics ------------------------")
+        f_log.write("\n------------------------ Training metrics ------------------------\n")
+        print("Average segmentation loss for epoch = {:.2f}".format(avg_loss_seg))
+        f_log.write("Average segmentation loss for epoch = {:.2f}\n".format(avg_loss_seg))
+        print("Average VAF loss for epoch = {:.2f}".format(avg_loss_vaf))
+        f_log.write("Average VAF loss for epoch = {:.2f}\n".format(avg_loss_vaf))
+        print("Average HAF loss for epoch = {:.2f}".format(avg_loss_haf))
+        f_log.write("Average HAF loss for epoch = {:.2f}\n".format(avg_loss_haf))
+        print("Average loss for epoch = {:.2f}".format(avg_loss))
+        f_log.write("Average loss for epoch = {:.2f}\n".format(avg_loss))
+        print("Average accuracy for epoch = {:.4f}".format(avg_acc))
+        f_log.write("Average accuracy for epoch = {:.4f}\n".format(avg_acc))
+        print("Average F1 score for epoch = {:.4f}".format(avg_f1))
+        f_log.write("Average F1 score for epoch = {:.4f}\n".format(avg_f1))
+        print("------------------------------------------------------------------\n")
+        f_log.write("------------------------------------------------------------------\n\n")
 
     return net, avg_loss_seg, avg_loss_vaf, avg_loss_haf, avg_loss, avg_acc, avg_f1
 
@@ -150,11 +151,11 @@ def val(net, epoch, val_loader, f_log):
 
     for b_idx, sample in enumerate(val_loader):
         input_img, input_seg, input_mask, input_af = sample
-        if args.cuda:
-            input_img = input_img.cuda()
-            input_seg = input_seg.cuda()
-            input_mask = input_mask.cuda()
-            input_af = input_af.cuda()
+
+        input_img = input_img.cuda()
+        input_seg = input_seg.cuda()
+        input_mask = input_mask.cuda()
+        input_af = input_af.cuda()
 
         # do the forward pass
         outputs = net(input_img)[-1]
@@ -224,11 +225,11 @@ def worker(gpu, gpu_num, args):
     args.gpu = gpu
     args.rank = gpu
     print("Use GPU {} for training...".format(gpu))
-    dist.init_process_group(backend=args.backend, init_method=args.dist_url, world_size=args.world_size, rank=args.rank)
-    dist_print(datetime.datetime.now().strftime('[%Y/%m/%d %H:%M:%S]') + ' start training...')
+    print("{} -> {}\t{}/{}".format(args.backend, args.dist_url, args.rank, gpu_num))
+    dist.init_process_group(backend=args.backend, init_method=args.dist_url, world_size=gpu_num, rank=args.rank)
+    dist_print(datetime.now().strftime('[%Y/%m/%d %H:%M:%S]') + ' start training...')
 
     f_log = open(os.path.join(args.output_dir, "logs.txt"), "w") if args.rank == 0 else None
-
     # Model
     model = D4UNet()
     torch.cuda.set_device(args.gpu)
@@ -246,25 +247,27 @@ def worker(gpu, gpu_num, args):
     elif args.loss_type == 'wbce':
         ## BCE weight
         criterion_1 = torch.nn.BCEWithLogitsLoss(pos_weight=torch.tensor([9.6]).cuda())
+    else:
+        print("No such loss: {}".format(args.loss_type))
+        exit()
     criterion_2 = IoULoss()
     criterion_reg = RegL1Loss()
     optimizer = optim.Adam(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
     # Loss && Optimizer ready
 
-    scheduler = CosineAnnealingLR(optimizer, args.epoch)
+    scheduler = CosineAnnealingLR(optimizer, args.epochs)
     train_dataset = CULane(args.dataset_dir, 'train', args.random_transforms)
     train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
-    kwargs = {'batch_size': args.batch_size / gpu_num, 'shuffle': True, 'num_workers': args.workers,
+    kwargs = {'batch_size': args.batch_size // gpu_num, 'num_workers': args.workers,
               'sampler': train_sampler}
     train_loader = DataLoader(train_dataset, **kwargs)
 
-    kwargs = {'batch_size': args.batch_size / gpu_num, 'shuffle': False, 'num_workers': args.workers}
+    kwargs = {'batch_size': args.batch_size // gpu_num, 'shuffle': False, 'num_workers': args.workers}
     val_loader = DataLoader(CULane(args.dataset_dir, 'val', False), **kwargs)
 
     # TODO resume && finetune
-    for epoch in range(args.epoch):
-        if args.distributed:
-            train_sampler.set_epoch(epoch)
+    for epoch in range(args.epochs):
+        train_sampler.set_epoch(epoch)
         train(model, train_loader, [criterion_1, criterion_2, criterion_reg], optimizer, scheduler, f_log, epoch,
               args.gpu)
         save_model(model, optimizer, epoch, args.output_dir)
@@ -276,7 +279,7 @@ def mp_train():
         assert False, 'Path to dataset not provided!'
 
     # setup args
-    args.cuda = not args.no_cuda and torch.cuda.is_available()
+    args.cuda = torch.cuda.is_available()
     if args.output_dir is None:
         args.output_dir = datetime.now().strftime("%Y-%m-%d-%H%M")
         args.output_dir = os.path.join('.', 'experiments', 'culane', args.output_dir)
@@ -312,9 +315,7 @@ def mp_train():
 
 if __name__ == "__main__":
     # MP training for hm
-    if args.mp:
-        mp_train(args)
-
+    mp_train()
     exit()
     heads = {'hm': 1, 'vaf': 2, 'haf': 1}
     # model = get_pose_net(num_layers=34, heads=heads, head_conv=256, down_ratio=4)
