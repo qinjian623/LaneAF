@@ -7,6 +7,7 @@ TODOs
 ==
 1. [x] Dist training
 2. [x] Unet: Px F1 ~0.70 Not good enough
-3. [ ] ERFNet
-4. [ ] FPN
-5. [ ] Eval
+3. [x] ERFNet
+4. [ ] Eval
+5. [ ] FPN
+
