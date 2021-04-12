@@ -11,6 +11,8 @@ import torch.multiprocessing as mp
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
 from models.d4unet import D4UNet
+from models.erf.encoder import ERFNet as Encoder
+from models.erf.erfnet import EAFNet
 
 matplotlib.use('Agg')
 from matplotlib import pyplot as plt
@@ -28,8 +30,8 @@ parser = argparse.ArgumentParser('Options for training LaneAF models in PyTorch.
 parser.add_argument('--dataset-dir', type=str, default=None, help='path to dataset')
 parser.add_argument('--output-dir', type=str, default=None, help='output directory for model and logs')
 parser.add_argument('--snapshot', type=str, default=None, help='path to pre-trained model snapshot')
-parser.add_argument('--batch-size', type=int, default=32, metavar='N', help='batch size for training')
-parser.add_argument('--epochs', type=int, default=60, metavar='N', help='number of epochs to train for')
+parser.add_argument('--batch-size', type=int, default=128, metavar='N', help='batch size for training')
+parser.add_argument('--epochs', type=int, default=90, metavar='N', help='number of epochs to train for')
 parser.add_argument('--learning-rate', type=float, default=1e-3, metavar='LR', help='learning rate')
 parser.add_argument('--weight-decay', type=float, default=1e-3, metavar='WD', help='weight decay')
 parser.add_argument('--loss-type', type=str, default='wbce', help='Type of classification loss to use (focal/bce/wbce)')
@@ -50,6 +52,7 @@ parser.add_argument('--dist-url', default='tcp://127.0.0.1:8848', type=str,
                     help='url used to set up distributed training')
 parser.add_argument('--backend', default='nccl', type=str,
                     help='distributed backend')
+parser.add_argument('--pretrained', type=str, default=None, help='path to dataset')
 args = parser.parse_args()
 
 
@@ -68,13 +71,14 @@ def train(net, train_loader, criterions, optimizer, scheduler, f_log, epoch, gpu
     epoch_loss_seg, epoch_loss_vaf, epoch_loss_haf, epoch_loss, epoch_acc, epoch_f1 = list(), list(), list(), list(), list(), list()
     net.train()
     criterion_1, criterion_2, criterion_reg = criterions
+    metric_sampler_inter = 10
     for b_idx, sample in enumerate(train_loader):
         input_img, input_seg, input_mask, input_af = sample
 
-        input_img = input_img.cuda()
-        input_seg = input_seg.cuda()
-        input_mask = input_mask.cuda()
-        input_af = input_af.cuda()
+        input_img = input_img.cuda(gpu)
+        input_seg = input_seg.cuda(gpu)
+        input_mask = input_mask.cuda(gpu)
+        input_af = input_af.cuda(gpu)
 
         # zero gradients before forward pass
         optimizer.zero_grad()
@@ -88,20 +92,22 @@ def train(net, train_loader, criterions, optimizer, scheduler, f_log, epoch, gpu
                                                                                         input_mask)
         loss_vaf = 0.5 * criterion_reg(outputs['vaf'], input_af[:, :2, :, :], input_mask)
         loss_haf = 0.5 * criterion_reg(outputs['haf'], input_af[:, 2:3, :, :], input_mask)
-        pred = torch.sigmoid(outputs['hm']).detach().cpu().numpy().ravel()
-        target = input_mask.detach().cpu().numpy().ravel()
-        pred[target == train_loader.dataset.ignore_label] = 0
-        target[target == train_loader.dataset.ignore_label] = 0
-        train_acc = accuracy_score((pred > 0.5).astype(np.int64), (target > 0.5).astype(np.int64))
-        train_f1 = f1_score((target > 0.5).astype(np.int64), (pred > 0.5).astype(np.int64), zero_division=1)
 
         epoch_loss_seg.append(loss_seg.item())
         epoch_loss_vaf.append(loss_vaf.item())
         epoch_loss_haf.append(loss_haf.item())
         loss = loss_seg + loss_vaf + loss_haf
         epoch_loss.append(loss.item())
-        epoch_acc.append(train_acc)
-        epoch_f1.append(train_f1)
+        # Make training faster
+        if b_idx % metric_sampler_inter == 0:
+            pred = torch.sigmoid(outputs['hm']).detach().cpu().numpy().ravel()
+            target = input_mask.detach().cpu().numpy().ravel()
+            pred[target == train_loader.dataset.ignore_label] = 0
+            target[target == train_loader.dataset.ignore_label] = 0
+            train_acc = accuracy_score((pred > 0.5).astype(np.int64), (target > 0.5).astype(np.int64))
+            train_f1 = f1_score((target > 0.5).astype(np.int64), (pred > 0.5).astype(np.int64), zero_division=1)
+            epoch_acc.append(train_acc)
+            epoch_f1.append(train_f1)
 
         loss.backward()
         optimizer.step()
@@ -224,18 +230,30 @@ def dist_print(*args, **kwargs):
 def worker(gpu, gpu_num, args):
     args.gpu = gpu
     args.rank = gpu
-    print("Use GPU {} for training...".format(gpu))
+    # print("Use GPU {} for training...".format(gpu))
     print("{} -> {}\t{}/{}".format(args.backend, args.dist_url, args.rank, gpu_num))
     dist.init_process_group(backend=args.backend, init_method=args.dist_url, world_size=gpu_num, rank=args.rank)
     dist_print(datetime.now().strftime('[%Y/%m/%d %H:%M:%S]') + ' start training...')
 
     f_log = open(os.path.join(args.output_dir, "logs.txt"), "w") if args.rank == 0 else None
     # Model
-    model = D4UNet()
+    if args.pretrained is not None:
+        print("Loading pretrained weights from file {} ...".format(args.pretrained))
+        encoder = Encoder(1000)
+        sd = torch.load(args.pretrained, map_location="cpu")
+        sd = sd['state_dict']
+        new_sd = {}
+        for k, v in sd.items():
+            new_sd[k.replace("module.", '')] = v
+        encoder.load_state_dict(new_sd)
+    else:
+        encoder = None
+    model = EAFNet({"hm": 1, "haf": 1, "vaf": 2}, encoder=encoder)
     torch.cuda.set_device(args.gpu)
     model.cuda(args.gpu)
-    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
+    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
     print("Model ready...")
+    dist_print(model)
 
     # Loss && Optimizer
     # BCE(Focal) loss applied to each pixel individually

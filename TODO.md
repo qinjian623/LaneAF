@@ -5,7 +5,7 @@ DLA baseline
 
 TODOs
 ==
-1. [ ] Dist training
+1. [x] Dist training
 2. [x] Unet: Px F1 ~0.70 Not good enough
 3. [ ] ERFNet
 4. [ ] FPN
