@@ -1,7 +1,12 @@
+import time
 from collections import OrderedDict
 
 import torch
 import torch.nn as nn
+
+
+class ResBlock(nn.Module):
+    pass
 
 
 class D4UNet(nn.Module):
@@ -118,6 +123,14 @@ if __name__ == '__main__':
     u = D4UNet(in_channels=3, out_channels=3, init_features=32)
     p = torch.rand(1, 3, 512, 512)
     r = u(p)
+
+    import torchvision as tv
+    m = tv.models.segmentation.fcn_resnet50()
+    m.eval()
+    s = time.time()
+    r = m(p)
+    e = time.time()
+    print(e - s)
 
     for k, v in r.items():
         print(k, v.shape)

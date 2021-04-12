@@ -16,6 +16,8 @@ def tensor2image(tensor, mean, std):
     image = image[:, :, ::-1] # RGB to BGR
     return image.astype(np.uint8) # (H, W, C)
 
+
+
 def create_viz(img, seg, mask, vaf, haf):
     scale = 8
     img = cv2.resize(img, None, fx=2, fy=2, interpolation=cv2.INTER_LINEAR)

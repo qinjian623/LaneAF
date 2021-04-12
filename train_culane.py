@@ -1,24 +1,28 @@
-import os
+import argparse
 import json
+import os
 from datetime import datetime
 from statistics import mean
-import argparse
 
-import numpy as np
 import matplotlib
+import numpy as np
+import torch.distributed as dist
+import torch.multiprocessing as mp
+from torch.optim.lr_scheduler import CosineAnnealingLR
+
+from models.d4unet import D4UNet
+
 matplotlib.use('Agg')
 from matplotlib import pyplot as plt
 from sklearn.metrics import accuracy_score, f1_score
 
 import torch
 import torch.optim as optim
-import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 from datasets.culane import CULane
-from models.dla.pose_dla_dcn import get_pose_net
-from models.loss import FocalLoss, IoULoss, RegL1Loss
 
+from models.loss import FocalLoss, IoULoss, RegL1Loss
 
 parser = argparse.ArgumentParser('Options for training LaneAF models in PyTorch...')
 parser.add_argument('--dataset-dir', type=str, default=None, help='path to dataset')
@@ -29,52 +33,41 @@ parser.add_argument('--epochs', type=int, default=60, metavar='N', help='number 
 parser.add_argument('--learning-rate', type=float, default=1e-3, metavar='LR', help='learning rate')
 parser.add_argument('--weight-decay', type=float, default=1e-3, metavar='WD', help='weight decay')
 parser.add_argument('--loss-type', type=str, default='wbce', help='Type of classification loss to use (focal/bce/wbce)')
-parser.add_argument('--log-schedule', type=int, default=10, metavar='N', help='number of iterations to print/save log after')
+parser.add_argument('--log-schedule', type=int, default=10, metavar='N',
+                    help='number of iterations to print/save log after')
 parser.add_argument('--seed', type=int, default=1, help='set seed to some constant value to reproduce experiments')
 parser.add_argument('--no-cuda', action='store_true', default=False, help='do not use cuda for training')
-parser.add_argument('--random-transforms', action='store_true', default=False, help='apply random transforms to input during training')
+parser.add_argument('--random-transforms', action='store_true', default=False,
+                    help='apply random transforms to input during training')
 
+parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
+                    help='number of data loading workers (default: 4)')
+parser.add_argument('--world-size', default=-1, type=int,
+                    help='number of nodes for distributed training')
+parser.add_argument('--rank', default=-1, type=int,
+                    help='node rank for distributed training')
+parser.add_argument('--dist-url', default='tcp://127.0.0.1:8848', type=str,
+                    help='url used to set up distributed training')
+parser.add_argument('--dist-backend', default='nccl', type=str,
+                    help='distributed backend')
 args = parser.parse_args()
 
-# check args
-if args.dataset_dir is None:
-    assert False, 'Path to dataset not provided!'
 
-# setup args
-args.cuda = not args.no_cuda and torch.cuda.is_available()
-if args.output_dir is None:
-    args.output_dir = datetime.now().strftime("%Y-%m-%d-%H:%M")
-    args.output_dir = os.path.join('.', 'experiments', 'culane', args.output_dir)
-
-if not os.path.exists(args.output_dir):
-    os.makedirs(args.output_dir)
-else:
-    assert False, 'Output directory already exists!'
-
-# store config in output directory
-with open(os.path.join(args.output_dir, 'config.json'), 'w') as f:
-    json.dump(vars(args), f)
-
-# set random seed
-torch.manual_seed(args.seed)
-if args.cuda:
-    torch.cuda.manual_seed(args.seed)
-
-kwargs = {'batch_size': args.batch_size, 'shuffle': True, 'num_workers': 10}
-train_loader = DataLoader(CULane(args.dataset_dir, 'train', args.random_transforms), **kwargs)
-kwargs = {'batch_size': 1, 'shuffle': False, 'num_workers': 10}
-val_loader = DataLoader(CULane(args.dataset_dir, 'val', False), **kwargs)
-
-# global var to store best validation F1 score across all epochs
-best_f1 = 0.0
-# create file handles
-f_log = open(os.path.join(args.output_dir, "logs.txt"), "w")
+def save_model(net, optimizer, epoch, save_path):
+    if dist.get_rank() == 0:
+        model_state_dict = net.state_dict()
+        state = {'model': model_state_dict, 'optimizer': optimizer.state_dict()}
+        # state = {'model': model_state_dict}
+        assert os.path.exists(save_path)
+        model_path = os.path.join(save_path, 'ep%03d.pth' % epoch)
+        torch.save(state, model_path)
 
 
 # training function
-def train(net, epoch):
+def train(net, train_loader, criterions, optimizer, scheduler, f_log, epoch, gpu):
     epoch_loss_seg, epoch_loss_vaf, epoch_loss_haf, epoch_loss, epoch_acc, epoch_f1 = list(), list(), list(), list(), list(), list()
     net.train()
+    criterion_1, criterion_2, criterion_reg = criterions
     for b_idx, sample in enumerate(train_loader):
         input_img, input_seg, input_mask, input_af = sample
         if args.cuda:
@@ -91,9 +84,10 @@ def train(net, epoch):
 
         # calculate losses and metrics
         _mask = (input_mask != train_loader.dataset.ignore_label).float()
-        loss_seg = criterion_1(outputs['hm']*_mask, input_mask*_mask) + criterion_2(torch.sigmoid(outputs['hm']), input_mask)
-        loss_vaf = 0.5*criterion_reg(outputs['vaf'], input_af[:, :2, :, :], input_mask)
-        loss_haf = 0.5*criterion_reg(outputs['haf'], input_af[:, 2:3, :, :], input_mask)
+        loss_seg = criterion_1(outputs['hm'] * _mask, input_mask * _mask) + criterion_2(torch.sigmoid(outputs['hm']),
+                                                                                        input_mask)
+        loss_vaf = 0.5 * criterion_reg(outputs['vaf'], input_af[:, :2, :, :], input_mask)
+        loss_haf = 0.5 * criterion_reg(outputs['haf'], input_af[:, 2:3, :, :], input_mask)
         pred = torch.sigmoid(outputs['hm']).detach().cpu().numpy().ravel()
         target = input_mask.detach().cpu().numpy().ravel()
         pred[target == train_loader.dataset.ignore_label] = 0
@@ -111,13 +105,14 @@ def train(net, epoch):
 
         loss.backward()
         optimizer.step()
-        if b_idx % args.log_schedule == 0:
+        if b_idx % args.log_schedule == 0 and dist.get_rank() == 0:
             print('Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}\tF1-score: {:.4f} \tSegloss: {:.4f}'.format(
-                epoch, (b_idx+1) * args.batch_size, len(train_loader.dataset),
-                100. * (b_idx+1) * args.batch_size / len(train_loader.dataset), loss.item(), train_f1, loss_seg.item()))
+                epoch, (b_idx + 1) * args.batch_size, len(train_loader.dataset),
+                       100. * (b_idx + 1) * args.batch_size / len(train_loader.dataset), loss.item(), train_f1,
+                loss_seg.item()))
             f_log.write('Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}\tF1-score: {:.4f}\n'.format(
-                epoch, (b_idx+1) * args.batch_size, len(train_loader.dataset),
-                100. * (b_idx+1) * args.batch_size / len(train_loader.dataset), loss.item(), train_f1))
+                epoch, (b_idx + 1) * args.batch_size, len(train_loader.dataset),
+                       100. * (b_idx + 1) * args.batch_size / len(train_loader.dataset), loss.item(), train_f1))
 
     scheduler.step()
     # now that the epoch is completed calculate statistics and store logs
@@ -143,15 +138,16 @@ def train(net, epoch):
     f_log.write("Average F1 score for epoch = {:.4f}\n".format(avg_f1))
     print("------------------------------------------------------------------\n")
     f_log.write("------------------------------------------------------------------\n\n")
-    
+
     return net, avg_loss_seg, avg_loss_vaf, avg_loss_haf, avg_loss, avg_acc, avg_f1
 
+
 # validation function
-def val(net, epoch):
+def val(net, epoch, val_loader, f_log):
     global best_f1
     epoch_loss_seg, epoch_loss_vaf, epoch_loss_haf, epoch_loss, epoch_acc, epoch_f1 = list(), list(), list(), list(), list(), list()
     net.eval()
-    
+
     for b_idx, sample in enumerate(val_loader):
         input_img, input_seg, input_mask, input_af = sample
         if args.cuda:
@@ -166,8 +162,8 @@ def val(net, epoch):
         # calculate losses and metrics
         _mask = (input_mask != val_loader.dataset.ignore_label).float()
         loss_seg = criterion_1(outputs['hm'], input_mask) + criterion_2(torch.sigmoid(outputs['hm']), input_mask)
-        loss_vaf = 0.5*criterion_reg(outputs['vaf'], input_af[:, :2, :, :], input_mask)
-        loss_haf = 0.5*criterion_reg(outputs['haf'], input_af[:, 2:3, :, :], input_mask)
+        loss_vaf = 0.5 * criterion_reg(outputs['vaf'], input_af[:, :2, :, :], input_mask)
+        loss_haf = 0.5 * criterion_reg(outputs['haf'], input_af[:, 2:3, :, :], input_mask)
         pred = torch.sigmoid(outputs['hm']).detach().cpu().numpy().ravel()
         target = input_mask.detach().cpu().numpy().ravel()
         pred[target == val_loader.dataset.ignore_label] = 0
@@ -183,7 +179,8 @@ def val(net, epoch):
         epoch_acc.append(val_acc)
         epoch_f1.append(val_f1)
 
-        print('Done with image {} out of {}...'.format(min(args.batch_size*(b_idx+1), len(val_loader.dataset)), len(val_loader.dataset)))
+        print('Done with image {} out of {}...'.format(min(args.batch_size * (b_idx + 1), len(val_loader.dataset)),
+                                                       len(val_loader.dataset)))
 
     # now that the epoch is completed calculate statistics and store logs
     avg_loss_seg = mean(epoch_loss_seg)
@@ -218,10 +215,109 @@ def val(net, epoch):
     return avg_loss_seg, avg_loss_vaf, avg_loss_haf, avg_loss, avg_acc, avg_f1
 
 
+def dist_print(*args, **kwargs):
+    if dist.get_rank() == 0:
+        print(*args, **kwargs)
+
+
+def worker(gpu, gpu_num, args):
+    args.gpu = gpu
+    args.rank = gpu
+    print("Use GPU {} for training...".format(gpu))
+    dist.init_process_group(backend=args.backend, init_method=args.dist_url, world_size=args.world_size, rank=args.rank)
+    dist_print(datetime.datetime.now().strftime('[%Y/%m/%d %H:%M:%S]') + ' start training...')
+
+    f_log = open(os.path.join(args.output_dir, "logs.txt"), "w") if args.rank == 0 else None
+
+    # Model
+    model = D4UNet()
+    torch.cuda.set_device(args.gpu)
+    model.cuda(args.gpu)
+    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
+    print("Model ready...")
+
+    # Loss && Optimizer
+    # BCE(Focal) loss applied to each pixel individually
+    if args.loss_type == 'focal':
+        criterion_1 = FocalLoss(gamma=2.0, alpha=0.25, size_average=True)
+    elif args.loss_type == 'bce':
+        ## BCE weight
+        criterion_1 = torch.nn.BCEWithLogitsLoss()
+    elif args.loss_type == 'wbce':
+        ## BCE weight
+        criterion_1 = torch.nn.BCEWithLogitsLoss(pos_weight=torch.tensor([9.6]).cuda())
+    criterion_2 = IoULoss()
+    criterion_reg = RegL1Loss()
+    optimizer = optim.Adam(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
+    # Loss && Optimizer ready
+
+    scheduler = CosineAnnealingLR(optimizer, args.epoch)
+    train_dataset = CULane(args.dataset_dir, 'train', args.random_transforms)
+    train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
+    kwargs = {'batch_size': args.batch_size / gpu_num, 'shuffle': True, 'num_workers': args.workers,
+              'sampler': train_sampler}
+    train_loader = DataLoader(train_dataset, **kwargs)
+
+    kwargs = {'batch_size': args.batch_size / gpu_num, 'shuffle': False, 'num_workers': args.workers}
+    val_loader = DataLoader(CULane(args.dataset_dir, 'val', False), **kwargs)
+
+    # TODO resume && finetune
+    for epoch in range(args.epoch):
+        if args.distributed:
+            train_sampler.set_epoch(epoch)
+        train(model, train_loader, [criterion_1, criterion_2, criterion_reg], optimizer, scheduler, f_log, epoch,
+              args.gpu)
+        save_model(model, optimizer, epoch, args.output_dir)
+
+
+def mp_train():
+    # check args
+    if args.dataset_dir is None:
+        assert False, 'Path to dataset not provided!'
+
+    # setup args
+    args.cuda = not args.no_cuda and torch.cuda.is_available()
+    if args.output_dir is None:
+        args.output_dir = datetime.now().strftime("%Y-%m-%d-%H%M")
+        args.output_dir = os.path.join('.', 'experiments', 'culane', args.output_dir)
+
+    if not os.path.exists(args.output_dir):
+        os.makedirs(args.output_dir)
+    else:
+        assert False, 'Output directory already exists!'
+
+    # store config in output directory
+    with open(os.path.join(args.output_dir, 'config.json'), 'w') as f:
+        json.dump(vars(args), f)
+
+    # set random seed
+    torch.manual_seed(args.seed)
+    if args.cuda:
+        torch.cuda.manual_seed(args.seed)
+
+    assert args.world_size == 1, "Only world size == 1 mp training now"
+    ngpus_per_node = torch.cuda.device_count()
+    mp.spawn(worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args))
+    exit()
+
+    kwargs = {'batch_size': args.batch_size, 'shuffle': True, 'num_workers': 10}
+    train_loader = DataLoader(CULane(args.dataset_dir, 'train', args.random_transforms), **kwargs)
+    kwargs = {'batch_size': 1, 'shuffle': False, 'num_workers': 10}
+    val_loader = DataLoader(CULane(args.dataset_dir, 'val', False), **kwargs)
+
+    # global var to store best validation F1 score across all epochs
+    best_f1 = 0.0
+    # create file handles
+
+
 if __name__ == "__main__":
+    # MP training for hm
+    if args.mp:
+        mp_train(args)
+
+    exit()
     heads = {'hm': 1, 'vaf': 2, 'haf': 1}
     # model = get_pose_net(num_layers=34, heads=heads, head_conv=256, down_ratio=4)
-    from models.d4unet import D4UNet
     model = D4UNet()
 
     if args.snapshot is not None:
@@ -255,7 +351,7 @@ if __name__ == "__main__":
     # ax1.plot([], 'b', label='Training HAF loss')
     # ax1.plot([], 'k', label='Training total loss')
     # ax1.legend()
-    
+
     train_loss_seg, train_loss_vaf, train_loss_haf, train_loss = list(), list(), list(), list()
 
     # fig2, ax2 = plt.subplots()
@@ -288,7 +384,7 @@ if __name__ == "__main__":
         train_loss.append(avg_loss)
         train_acc.append(avg_acc)
         train_f1.append(avg_f1)
-        torch.save(model.state_dict(), os.path.join(args.output_dir, 'net_' + '%.4d' % (i ,) + '.pth'))
+        torch.save(model.state_dict(), os.path.join(args.output_dir, 'net_' + '%.4d' % (i,) + '.pth'))
         # plot training loss
         # ax1.plot(train_loss_seg, 'r', label='Training segmentation loss')
         # ax1.plot(train_loss_vaf, 'g', label='Training VAF loss')
