@@ -32,16 +32,19 @@ def eval_culane(lb_dir, pred_dir, sub_set, w_lane=30, iou=0.5, im_w=1640, im_h=5
                 bin_cmd=HERE + '/evaluate'):
     eval_type = ["split", "all", "normal", "crowd", "hlight", "shadow", "noline", "arrow", "curve", "cross", "night"]
     if sub_set not in eval_type:
-        raise RuntimeError("No such label: {} in culane".format(sub_set))
-    if sub_set == "all":
-        list_file = os.path.join(lb_dir, 'list/test.txt')
-    elif sub_set == "split":
-        ret = {}
-        for sub_type in eval_type[2:]:
-            ret[sub_type] = eval_culane(lb_dir, pred_dir, sub_type, w_lane=w_lane, iou=iou, im_w=im_w, im_h=im_h)
-        return ret
+        assert os.path.exists(sub_set)
+        # raise RuntimeError("No such label: {} in culane".format(sub_set))
+        list_file = sub_set
     else:
-        list_file = os.path.join(lb_dir, 'list/test_split/test{}_{}.txt'.format(eval_type.index(sub_set) - 2, sub_set))
+        if sub_set == "all":
+            list_file = os.path.join(lb_dir, 'list/test.txt')
+        elif sub_set == "split":
+            ret = {}
+            for sub_type in eval_type[2:]:
+                ret[sub_type] = eval_culane(lb_dir, pred_dir, sub_type, w_lane=w_lane, iou=iou, im_w=im_w, im_h=im_h)
+            return ret
+        else:
+            list_file = os.path.join(lb_dir, 'list/test_split/test{}_{}.txt'.format(eval_type.index(sub_set) - 2, sub_set))
     ret = {}
     ret[sub_set] = _test_list(lb_dir, pred_dir, list_file, w_lane=w_lane, iou=iou, im_w=im_w, im_h=im_h,
                               bin_cmd=bin_cmd)
