@@ -34,8 +34,8 @@ def _segm_resnet(name, backbone_name, num_classes, aux, pretrained_backbone=True
 
 if __name__ == '__main__':
     import torchvision
-    backbone = torchvision.models.resnet18()
-    return_layers = {'layer4': '4', 'layer3': '3', 'layer2': '2'}
+    backbone = torchvision.models.resnet18(True)
+    return_layers = {'layer4': '4', 'layer3': '3', 'layer2': '2', 'layer1': '1', 'layer5':'5'}
     backbone = IntermediateLayerGetter(backbone, return_layers=return_layers)
     a = torch.rand(1, 3, 512, 512)
     r = backbone(a)

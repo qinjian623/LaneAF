@@ -30,7 +30,7 @@ parser = argparse.ArgumentParser('Options for training LaneAF models in PyTorch.
 parser.add_argument('--dataset-dir', type=str, default=None, help='path to dataset')
 parser.add_argument('--output-dir', type=str, default=None, help='output directory for model and logs')
 parser.add_argument('--snapshot', type=str, default=None, help='path to pre-trained model snapshot')
-parser.add_argument('--batch-size', type=int, default=128, metavar='N', help='batch size for training')
+parser.add_argument('--batch-size', type=int, default=32, metavar='N', help='batch size for training')
 parser.add_argument('--epochs', type=int, default=90, metavar='N', help='number of epochs to train for')
 parser.add_argument('--learning-rate', type=float, default=1e-3, metavar='LR', help='learning rate')
 parser.add_argument('--weight-decay', type=float, default=1e-3, metavar='WD', help='weight decay')
@@ -43,7 +43,7 @@ parser.add_argument('--random-transforms', action='store_true', default=False,
                     help='apply random transforms to input during training')
 
 parser.add_argument('-j', '--workers', default=10, type=int, metavar='N',
-                    help='number of data loading workers (default: 4)')
+                    help='number of data loading workers (default: 10)')
 parser.add_argument('--world-size', default=1, type=int,
                     help='number of nodes for distributed training')
 parser.add_argument('--rank', default=-1, type=int,
@@ -74,11 +74,10 @@ def train(net, train_loader, criterions, optimizer, scheduler, f_log, epoch, gpu
     metric_sampler_inter = 10
     for b_idx, sample in enumerate(train_loader):
         input_img, input_seg, input_mask, input_af = sample
-
-        input_img = input_img.cuda(gpu)
-        input_seg = input_seg.cuda(gpu)
-        input_mask = input_mask.cuda(gpu)
-        input_af = input_af.cuda(gpu)
+        input_img = input_img.cuda(gpu, non_blocking=True)
+        # input_seg = input_seg.cuda(gpu, non_blocking=True)
+        input_mask = input_mask.cuda(gpu, non_blocking=True)
+        input_af = input_af.cuda(gpu, non_blocking=True)
 
         # zero gradients before forward pass
         optimizer.zero_grad()
@@ -98,6 +97,7 @@ def train(net, train_loader, criterions, optimizer, scheduler, f_log, epoch, gpu
         epoch_loss_haf.append(loss_haf.item())
         loss = loss_seg + loss_vaf + loss_haf
         epoch_loss.append(loss.item())
+
         # Make training faster
         if b_idx % metric_sampler_inter == 0:
             pred = torch.sigmoid(outputs['hm']).detach().cpu().numpy().ravel()
@@ -157,7 +157,6 @@ def val(net, epoch, val_loader, f_log):
 
     for b_idx, sample in enumerate(val_loader):
         input_img, input_seg, input_mask, input_af = sample
-
         input_img = input_img.cuda()
         input_seg = input_seg.cuda()
         input_mask = input_mask.cuda()
@@ -248,8 +247,11 @@ def worker(gpu, gpu_num, args):
         encoder.load_state_dict(new_sd)
     else:
         encoder = None
+
+    torch.set_num_threads(1)
     model = EAFNet({"hm": 1, "haf": 1, "vaf": 2}, encoder=encoder)
     torch.cuda.set_device(args.gpu)
+
     model.cuda(args.gpu)
     model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
     print("Model ready...")
@@ -268,8 +270,9 @@ def worker(gpu, gpu_num, args):
     else:
         print("No such loss: {}".format(args.loss_type))
         exit()
-    criterion_2 = IoULoss()
-    criterion_reg = RegL1Loss()
+    criterion_1.cuda(args.gpu)
+    criterion_2 = IoULoss().cuda(args.gpu)
+    criterion_reg = RegL1Loss().cuda(args.gpu)
     optimizer = optim.Adam(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
     # Loss && Optimizer ready
 
@@ -278,10 +281,10 @@ def worker(gpu, gpu_num, args):
     train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
     kwargs = {'batch_size': args.batch_size // gpu_num, 'num_workers': args.workers,
               'sampler': train_sampler}
-    train_loader = DataLoader(train_dataset, **kwargs)
+    train_loader = DataLoader(train_dataset, **kwargs, pin_memory=True)
 
-    kwargs = {'batch_size': args.batch_size // gpu_num, 'shuffle': False, 'num_workers': args.workers}
-    val_loader = DataLoader(CULane(args.dataset_dir, 'val', False), **kwargs)
+    # kwargs = {'batch_size': args.batch_size // gpu_num, 'shuffle': False, 'num_workers': args.workers}
+    # val_loader = DataLoader(CULane(args.dataset_dir, 'val', False), **kwargs)
 
     # TODO resume && finetune
     for epoch in range(args.epochs):

@@ -5,9 +5,13 @@ DLA baseline
 
 TODOs
 ==
-1. [x] Dist training
-2. [x] Unet: Px F1 ~0.70 Not good enough
-3. [x] ERFNet
-4. [ ] Eval
-5. [ ] FPN
++ [x] Dist training
++ [x] Unet: Px F1 ~0.70 Not good enough
++ [x] ERFNet
++ [x] Test
++ [x] Lower Resolution
++ [ ] Eval
++ [ ] FPN
++ [ ] Merge into MMSeg
+
 

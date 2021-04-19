@@ -30,4 +30,5 @@ def create_viz(img, seg, mask, vaf, haf):
     for r, c in zip(rows, cols):
         img = cv2.arrowedLine(img, (c*scale, r*scale),(int(c*scale+vaf[r, c, 0]*scale*0.75), 
             int(r*scale+vaf[r, c, 1]*scale*0.5)), seg_color[r, c, :].tolist(), 1, tipLength=0.4)
+
     return img

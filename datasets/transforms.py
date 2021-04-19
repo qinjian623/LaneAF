@@ -154,6 +154,7 @@ class GroupConcerPad(object):
                 out_images[-1] = out_images[-1][..., np.newaxis]  # single channel image
         return out_images
 
+
 class GroupRandomScaleNew(object):
     def __init__(self, size=(976, 208), interpolation=(cv2.INTER_LINEAR, cv2.INTER_NEAREST)):
         self.size = size

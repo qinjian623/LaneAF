@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 import torch.nn.init as init
 import torch.nn.functional as F
+from models.erf.encoder import ERFNet as Encoder, Classifier
 
 from models.erf.af_head import AFHead
 
@@ -83,8 +84,10 @@ class Encoder(nn.Module):
             self.layers.append(non_bottleneck_1d(128, 0.3, 8))
             self.layers.append(non_bottleneck_1d(128, 0.3, 16))
 
+        self.classifier = Classifier(num_classes)
+
         # Only in encoder mode:
-        self.output_conv = nn.Conv2d(128, num_classes, 1, stride=1, padding=0, bias=True)
+        # self.output_conv = nn.Conv2d(128, num_classes, 1, stride=1, padding=0, bias=True)
 
     def forward(self, input, predict=False):
         output = self.initial_block(input)
@@ -94,7 +97,6 @@ class Encoder(nn.Module):
 
         if predict:
             output = self.output_conv(output)
-
         return output
 
 
@@ -202,7 +204,6 @@ class EAFNet(nn.Module):
 
 
 if __name__ == '__main__':
-    from models.erf.encoder import ERFNet as Encoder
 
     encoder = Encoder(1000)
     x = torch.rand(1, 3, 224, 224)

@@ -59,7 +59,7 @@ if args.cuda:
 
 kwargs = {'batch_size': args.batch_size, 'shuffle': False, 'num_workers': 10}
 print(args.dataset_dir)
-test_loader = DataLoader(CULane(args.dataset_dir, 'val', False), **kwargs)
+test_loader = DataLoader(CULane(args.dataset_dir, 'test', False), **kwargs)
 
 # create file handles
 f_log = open(os.path.join(args.output_dir, "logs.txt"), "w")
@@ -116,13 +116,18 @@ def test(net):
             os.makedirs(os.path.join(args.output_dir, 'outputs', os.path.dirname(filenames[b_idx][1:])))
         with open(os.path.join(args.output_dir, 'outputs', filenames[b_idx][1:-3]+'lines.txt'), 'w') as f:
             f.write('\n'.join(' '.join(map(str, _lane)) for _lane in xy_coords))
-        if b_idx > 100:
-            break
+        # if b_idx > 2000:
+        #     break
         # create video visualization
         if args.save_viz:
             print("Save VIZ")
             img_out = create_viz(img, seg_out.astype(np.uint8), mask_out, vaf_out, haf_out)
+            for points in xy_coords:
+                for x, y in zip(points[::2], points[1::2]):
+                    img_out = cv2.circle(img_out, (int(x), int(y)), radius=4, color=(0, 0, 255), thickness=-1)
             cv2.imwrite("{:04d}.jpg".format(b_idx), img_out)
+            # cv2.imshow("O", img_out)
+            # cv2.waitKey(1)
             if out_vid is None:
                 out_vid = cv2.VideoWriter("VideoTest.avi", cv2.VideoWriter_fourcc(*'XVID'), 5.0, (1408, 1152)) 
             out_vid.write(img_out)
@@ -133,12 +138,24 @@ def test(net):
 
     return
 
+
 if __name__ == "__main__":
     heads = {'hm': 1, 'vaf': 2, 'haf': 1}
     # model = get_pose_net(num_layers=34, heads=heads, head_conv=256, down_ratio=4)
     from models.d4unet import D4UNet
-    model = D4UNet()
-    model.load_state_dict(torch.load(args.snapshot), strict=True)
+    from models.erf.erfnet import EAFNet
+    model = EAFNet({"hm": 1, "haf": 1, "vaf": 2})
+    print(model)
+    # model = D4UNet()
+    sd = torch.load(args.snapshot)
+    sd = sd['model']
+    new_sd = {}
+    for k, v in sd.items():
+        new_sd[k.replace("module.", '')] = v
+    sd = {}
+    for k, v in new_sd.items():
+        sd[k.replace("encoder.features.", '')] = v
+    model.load_state_dict(sd, strict=True)
     if args.cuda:
         model.cuda()
     print(model)

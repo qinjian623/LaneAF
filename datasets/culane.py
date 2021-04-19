@@ -73,7 +73,7 @@ class CULane(Dataset):
     def __init__(self, path, image_set='train', random_transforms=False):
         super(CULane, self).__init__()
         assert image_set in ('train', 'val', 'test'), "image_set is not valid!"
-        self.input_size = (288, 832)  # original image res: (590, 1640) -> (590-14, 1640+24)/2
+        self.input_size = (256, 512)  # original image res: (590, 1640) -> (590-14, 1640+24)/2
         self.output_scale = 0.25
         self.samp_factor = 2. / self.output_scale
         self.data_dir_path = path
@@ -112,8 +112,12 @@ class CULane(Dataset):
         with open(listfile) as f:
             for line in f:
                 l = line.strip()
-                self.img_list.append(
-                    os.path.join(self.data_dir_path, l[0:]))  # l[1:]  get rid of the first '/' so as for os.path.join
+                if self.image_set == 'test':
+                    self.img_list.append(os.path.join(self.data_dir_path,
+                                                      l[1:]))  # l[1:]  get rid of the first '/' so as for os.path.join
+                else:
+                    self.img_list.append(os.path.join(self.data_dir_path,
+                                                      l[0:]))
                 if self.image_set == 'test':
                     self.seg_list.append(os.path.join(self.data_dir_path, 'laneseg_label_w16_test', l[0:-3] + 'png'))
                 else:
@@ -121,10 +125,13 @@ class CULane(Dataset):
 
     def __getitem__(self, idx):
         img = cv2.imread(self.img_list[idx]).astype(np.float32) / 255.  # (H, W, 3)
-        seg = cv2.imread(self.seg_list[idx], cv2.IMREAD_UNCHANGED)  # (H, W)
+        if self.image_set == "test":
+            seg = np.zeros(img.shape[:2])
+        else:
+            seg = cv2.imread(self.seg_list[idx], cv2.IMREAD_UNCHANGED)  # (H, W)
         seg = np.tile(seg[..., np.newaxis], (1, 1, 3))  # (H, W, 3)
-        seg = cv2.resize(seg, (1664, 576), interpolation=cv2.INTER_NEAREST)
-        img = cv2.resize(img, (1664, 576), interpolation=cv2.INTER_LINEAR)
+        seg = cv2.resize(seg, (1024, 512), interpolation=cv2.INTER_NEAREST)
+        img = cv2.resize(img, (1024, 512), interpolation=cv2.INTER_LINEAR)
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         img, seg = self.transforms((img, seg))
         seg = cv2.resize(seg, None, fx=self.output_scale, fy=self.output_scale, interpolation=cv2.INTER_NEAREST)
