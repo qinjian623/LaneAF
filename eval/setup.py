@@ -41,7 +41,8 @@ class MyInstall(DistutilsInstall):
         DistutilsInstall.run(self)
         self.do_pre_install_stuff()
         target_file = os.path.join(HERE, 'culane', 'evaluate')
-        self.move_file(target_file, self.install_lib)
+        self.copy_file(target_file, os.path.join(self.install_lib, "hm_cv_metrics"))
+
 
 
 setup(
@@ -54,12 +55,12 @@ setup(
     install_requires=[],
     python_requires='>=3',
     scripts=['bin/hm_eval_lane'],
-    ext_modules=[
-        Extension('culane',
-                  glob.glob(os.path.join(HERE, 'culane/src', '*.cpp')),
-                  libraries=['rt'],
-                  include_dirs=[os.path.join(HERE, 'culane/include'), os.path.join(HERE, 'culane/getopt')])
-    ],
+    # ext_modules=[
+    #     Extension('culane',
+    #               glob.glob(os.path.join(HERE, 'culane/src', '*.cpp')),
+    #               libraries=['rt'],
+    #               include_dirs=[os.path.join(HERE, 'culane/include'), os.path.join(HERE, 'culane/getopt')])
+    # ],
     cmdclass={
         'install': MyInstall,
     },
