@@ -19,8 +19,8 @@ def tensor2image(tensor, mean, std):
 
 
 def create_viz(img, seg, mask, vaf, haf):
-    scale = 8
-    img = cv2.resize(img, None, fx=2, fy=2, interpolation=cv2.INTER_LINEAR)
+    scale = 32
+    # img = cv2.resize(img, None, fx=2, fy=2, interpolation=cv2.INTER_LINEAR)
     #seg_large = cv2.resize(seg, None, fx=scale, fy=scale, interpolation=cv2.INTER_LINEAR)
     #seg_large_color = cv2.applyColorMap(40*seg_large, cv2.COLORMAP_JET)
     #img[seg_large > 0, :] = seg_large_color[seg_large > 0, :]

@@ -1,4 +1,5 @@
 import os
+import math
 
 import cv2
 import numpy as np
@@ -9,6 +10,21 @@ from torch.utils.data import Dataset
 
 import datasets.transforms as tf
 from utils.affinity_fields import generateAFs
+
+
+def shrink(im, size):
+    s_w, s_h = size
+    h, w, _ = im.shape
+    ret = np.zeros((s_h, s_w))
+    stride_w = w // s_w
+    stride_h = h // s_h
+    for i in range(0, h, stride_h):
+        for j in range(0, w, stride_w):
+            patch = im[i:i + stride_h, j:j + stride_w, :]
+            if i // stride_h >= s_h or j // stride_w >= s_w:
+                continue
+            ret[i // stride_h, j // stride_w] = patch.max()
+    return ret
 
 
 def coord_op_to_ip(x, y, scale):
@@ -70,41 +86,52 @@ def get_lanes_culane(seg_out, samp_factor):
 
 
 class CULane(Dataset):
-    def __init__(self, path, image_set='train', random_transforms=False):
+    def __init__(self, path, image_set='train', random_transforms=True, img_transforms=None):
         super(CULane, self).__init__()
+        cv2.setNumThreads(0)
+        cv2.ocl.setUseOpenCL(False)
         assert image_set in ('train', 'val', 'test'), "image_set is not valid!"
-        self.input_size = (256, 512)  # original image res: (590, 1640) -> (590-14, 1640+24)/2
-        self.output_scale = 0.25
-        self.samp_factor = 2. / self.output_scale
+        self.input_size = (1024, 512)  # W, H # original image res: (590, 1640) -> (590-14, 1640+24)/2
+        self.output_stride = 32
+        self.output_size = list([i // 32 for i in self.input_size])  # TODO valid dividing
+        self.training_scales_range = (0.9, 1.2)
+        self.samp_factor = 32 / (1 / self.training_scales_range[0])
+        self.random_transforms = random_transforms
+
         self.data_dir_path = path
         self.image_set = image_set
-        self.random_transforms = random_transforms
+
         # normalization transform for input images
         self.mean = [0.485, 0.456, 0.406]  # [103.939, 116.779, 123.68]
         self.std = [0.229, 0.224, 0.225]  # [1, 1, 1]
         self.ignore_label = 255
+
+        if img_transforms is not None:
+            pass
+
         if self.random_transforms:
             self.transforms = transforms.Compose([
-                tf.GroupRandomScale(size=(0.5, 0.6), interpolation=(cv2.INTER_LINEAR, cv2.INTER_NEAREST)),
-                tf.GroupRandomCropRatio(size=(self.input_size[1], self.input_size[0])),
+                tf.GroupRandomScale(size=self.training_scales_range,
+                                    interpolation=(cv2.INTER_LINEAR, cv2.INTER_NEAREST)),
+                tf.GroupRandomCropRatio(size=self.input_size),
                 tf.GroupRandomHorizontalFlip(),
-                tf.GroupRandomRotation(degree=(-1, 1), interpolation=(cv2.INTER_LINEAR, cv2.INTER_NEAREST),
+                tf.GroupRandomRotation(degree=(-5, 5), interpolation=(cv2.INTER_LINEAR, cv2.INTER_NEAREST),
                                        padding=(self.mean, (self.ignore_label,))),
                 tf.GroupNormalize(mean=(self.mean, (0,)), std=(self.std, (1,))),
             ])
         else:
             self.transforms = transforms.Compose([
-                tf.GroupRandomScale(size=(0.5, 0.5), interpolation=(cv2.INTER_LINEAR, cv2.INTER_NEAREST)),
+                tf.GroupRandomScale(size=(self.training_scales_range[0], self.training_scales_range[0]),
+                                    interpolation=(cv2.INTER_LINEAR, cv2.INTER_NEAREST)),
                 tf.GroupNormalize(mean=(self.mean, (0,)), std=(self.std, (1,))),
             ])
-        print("Creating Index...")
+        # print("Creating Index...")
+        self.img_list = []
+        self.seg_list = []
         self.create_index()
         print("Creating Index DONE")
 
     def create_index(self):
-        self.img_list = []
-        self.seg_list = []
-
         listfile = os.path.join(self.data_dir_path, "list", "{}.txt".format(self.image_set))
         if not os.path.exists(listfile):
             raise FileNotFoundError("List file doesn't exist. Label has to be generated! ...")
@@ -126,32 +153,31 @@ class CULane(Dataset):
     def __getitem__(self, idx):
         img = cv2.imread(self.img_list[idx]).astype(np.float32) / 255.  # (H, W, 3)
         if self.image_set == "test":
-            seg = np.zeros(img.shape[:2])
+            seg = np.zeros(img.shape[:2])  # Empty Test Label
         else:
             seg = cv2.imread(self.seg_list[idx], cv2.IMREAD_UNCHANGED)  # (H, W)
         seg = np.tile(seg[..., np.newaxis], (1, 1, 3))  # (H, W, 3)
-        seg = cv2.resize(seg, (1024, 512), interpolation=cv2.INTER_NEAREST)
-        img = cv2.resize(img, (1024, 512), interpolation=cv2.INTER_LINEAR)
+        # seg = cv2.resize(seg, self.input_size, interpolation=cv2.INTER_NEAREST)
+        # img = cv2.resize(img, self.input_size, interpolation=cv2.INTER_LINEAR)
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         img, seg = self.transforms((img, seg))
-        seg = cv2.resize(seg, None, fx=self.output_scale, fy=self.output_scale, interpolation=cv2.INTER_NEAREST)
+        seg = shrink(seg, (math.ceil(img.shape[1]/self.output_stride), math.ceil(img.shape[0]/self.output_stride)))
+        mask = seg[:, :].copy()
+        mask[seg[:, :] >= 1] = 1  # binary-mask
+        mask[seg[:, :] == self.ignore_label] = self.ignore_label  # ignored px
 
-        mask = seg[:, :, 0].copy()
-        mask[seg[:, :, 0] >= 1] = 1
-        mask[seg[:, :, 0] == self.ignore_label] = self.ignore_label
 
         # create AFs
-        seg_wo_ignore = seg[:, :, 0].copy()
+        seg_wo_ignore = seg[:, :].copy()
         seg_wo_ignore[seg_wo_ignore == self.ignore_label] = 0
         vaf, haf = generateAFs(seg_wo_ignore.astype(np.long), viz=False)
         af = np.concatenate((vaf, haf[:, :, 0:1]), axis=2)
 
         # convert all outputs to torch tensors
         img = torch.from_numpy(img).permute(2, 0, 1).contiguous().float()
-        seg = torch.from_numpy(seg[:, :, 0]).contiguous().long().unsqueeze(0)
         mask = torch.from_numpy(mask).contiguous().float().unsqueeze(0)
+        seg = torch.from_numpy(seg).contiguous().long().unsqueeze(0)
         af = torch.from_numpy(af).permute(2, 0, 1).contiguous().float()
-
         return img, seg, mask, af
 
     def __len__(self):

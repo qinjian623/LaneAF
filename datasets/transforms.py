@@ -1,9 +1,11 @@
+import numbers
 import random
+
 import cv2
 import numpy as np
-import numbers
 
-__all__ = ['GroupRandomCrop', 'GroupCenterCrop', 'GroupRandomPad', 'GroupCenterPad', 'GroupRandomScale', 'GroupRandomHorizontalFlip', 'GroupNormalize']
+__all__ = ['GroupRandomCrop', 'GroupCenterCrop', 'GroupRandomPad', 'GroupCenterPad', 'GroupRandomScale',
+           'GroupRandomHorizontalFlip', 'GroupNormalize']
 
 
 class GroupRandomCrop(object):
@@ -28,6 +30,7 @@ class GroupRandomCrop(object):
             out_images.append(img[h1:h2, w1:w2, ...])
         return out_images
 
+
 class GroupRandomCropRatio(object):
     def __init__(self, size):
         if isinstance(size, numbers.Number):
@@ -40,8 +43,10 @@ class GroupRandomCropRatio(object):
         tw, th = self.size
 
         out_images = list()
+
         h1 = random.randint(0, max(0, h - th))
         w1 = random.randint(0, max(0, w - tw))
+
         h2 = min(h1 + th, h)
         w2 = min(w1 + tw, w)
 
@@ -186,6 +191,7 @@ class GroupRandomScale(object):
                 out_images[-1] = out_images[-1][..., np.newaxis]  # single channel image
         return out_images
 
+
 class GroupRandomMultiScale(object):
     def __init__(self, size=(0.5, 1.5), interpolation=(cv2.INTER_LINEAR, cv2.INTER_NEAREST)):
         self.size = size
@@ -193,7 +199,7 @@ class GroupRandomMultiScale(object):
 
     def __call__(self, img_group):
         assert (len(self.interpolation) == len(img_group))
-        scales = [0.5, 1.0, 1.5] # random.uniform(self.size[0], self.size[1])
+        scales = [0.5, 1.0, 1.5]  # random.uniform(self.size[0], self.size[1])
         out_images = list()
         for scale in scales:
             for img, interpolation in zip(img_group, self.interpolation):
@@ -202,11 +208,14 @@ class GroupRandomMultiScale(object):
                     out_images[-1] = out_images[-1][..., np.newaxis]  # single channel image
         return out_images
 
+
 class GroupRandomScaleRatio(object):
     def __init__(self, size=(680, 762, 562, 592), interpolation=(cv2.INTER_LINEAR, cv2.INTER_NEAREST)):
         self.size = size
         self.interpolation = interpolation
-        self.origin_id = [0, 1360, 580, 768, 255, 300, 680, 710, 312, 1509, 800, 1377, 880, 910, 1188, 128, 960, 1784, 1414, 1150, 512, 1162, 950, 750, 1575, 708, 2111, 1848, 1071, 1204, 892, 639, 2040, 1524, 832, 1122, 1224, 2295]
+        self.origin_id = [0, 1360, 580, 768, 255, 300, 680, 710, 312, 1509, 800, 1377, 880, 910, 1188, 128, 960, 1784,
+                          1414, 1150, 512, 1162, 950, 750, 1575, 708, 2111, 1848, 1071, 1204, 892, 639, 2040, 1524, 832,
+                          1122, 1224, 2295]
 
     def __call__(self, img_group):
         assert (len(self.interpolation) == len(img_group))
@@ -214,9 +223,11 @@ class GroupRandomScaleRatio(object):
         h_scale = random.randint(self.size[2], self.size[3])
         h, w, _ = img_group[0].shape
         out_images = list()
-        out_images.append(cv2.resize(img_group[0], None, fx=w_scale*1.0/w, fy=h_scale*1.0/h, interpolation=self.interpolation[0])) # fx=w_scale*1.0/w, fy=h_scale*1.0/h
+        out_images.append(cv2.resize(img_group[0], None, fx=w_scale * 1.0 / w, fy=h_scale * 1.0 / h,
+                                     interpolation=self.interpolation[0]))  # fx=w_scale*1.0/w, fy=h_scale*1.0/h
         ### process label map ###
-        origin_label = cv2.resize(img_group[1], None, fx=w_scale*1.0/w, fy=h_scale*1.0/h, interpolation=self.interpolation[1])
+        origin_label = cv2.resize(img_group[1], None, fx=w_scale * 1.0 / w, fy=h_scale * 1.0 / h,
+                                  interpolation=self.interpolation[1])
         origin_label = origin_label.astype(int)
         label = origin_label[:, :, 0] * 5 + origin_label[:, :, 1] * 3 + origin_label[:, :, 2]
         new_label = np.ones(label.shape) * 100
@@ -224,9 +235,10 @@ class GroupRandomScaleRatio(object):
         for cnt in range(37):
             new_label = (label == self.origin_id[cnt]) * (cnt - 100) + new_label
         new_label = (label == self.origin_id[37]) * (36 - 100) + new_label
-        assert(100 not in np.unique(new_label))
+        assert (100 not in np.unique(new_label))
         out_images.append(new_label)
         return out_images
+
 
 class GroupRandomRotation(object):
     def __init__(self, degree=(-10, 10), interpolation=(cv2.INTER_LINEAR, cv2.INTER_NEAREST), padding=None):
@@ -244,7 +256,9 @@ class GroupRandomRotation(object):
             map_matrix = cv2.getRotationMatrix2D(center, degree, 1.0)
             out_images = list()
             for img, interpolation, padding in zip(img_group, self.interpolation, self.padding):
-                out_images.append(cv2.warpAffine(img, map_matrix, (w, h), flags=interpolation, borderMode=cv2.BORDER_CONSTANT, borderValue=padding))
+                out_images.append(
+                    cv2.warpAffine(img, map_matrix, (w, h), flags=interpolation, borderMode=cv2.BORDER_CONSTANT,
+                                   borderValue=padding))
                 if len(img.shape) > len(out_images[-1].shape):
                     out_images[-1] = out_images[-1][..., np.newaxis]  # single channel image
             return out_images
@@ -312,7 +326,6 @@ class GroupNormalize(object):
         # print(np.unique(out_images[1]))
         # cv2.waitKey()
         return out_images
-
 
 # class ToTorchFormatTensor(object):
 #     """ Converts a PIL.Image (RGB) or numpy.ndarray (H x W x C) in the range [0, 255]

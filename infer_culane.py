@@ -40,7 +40,7 @@ args.batch_size = 1
 # setup args
 args.cuda = not args.no_cuda and torch.cuda.is_available()
 if args.output_dir is None:
-    args.output_dir = datetime.now().strftime("%Y-%m-%d-%H:%M-infer")
+    args.output_dir = datetime.now().strftime("%Y-%m-%d-%H%M%S-infer")
     args.output_dir = os.path.join('.', 'experiments', 'culane', args.output_dir)
 
 if not os.path.exists(args.output_dir):
@@ -59,7 +59,7 @@ if args.cuda:
 
 kwargs = {'batch_size': args.batch_size, 'shuffle': False, 'num_workers': 10}
 print(args.dataset_dir)
-test_loader = DataLoader(CULane(args.dataset_dir, 'test', False), **kwargs)
+test_loader = DataLoader(CULane(args.dataset_dir, 'val', False), **kwargs)
 
 # create file handles
 f_log = open(os.path.join(args.output_dir, "logs.txt"), "w")
@@ -78,10 +78,8 @@ def test(net):
     for b_idx, sample in enumerate(test_loader):
         input_img, input_seg, input_mask, input_af = sample
         if args.cuda:
-            input_img = input_img.cuda()
-            input_seg = input_seg.cuda()
-            input_mask = input_mask.cuda()
-            input_af = input_af.cuda()
+            input_img = input_img.cuda(non_blocking=True)
+            input_seg = input_seg.cuda(non_blocking=True)
         torch.cuda.synchronize()
         s = time.time()
         # do the forward pass
@@ -100,7 +98,7 @@ def test(net):
         # decode AFs to get lane instances
         torch.cuda.synchronize()
         s = time.time()
-        seg_out = decodeAFs(mask_out[:, :, 0], vaf_out, haf_out, fg_thresh=128, err_thresh=5)
+        seg_out = decodeAFs(mask_out[:, :, 0], vaf_out, haf_out, fg_thresh=128, err_thresh=3)
 
         torch.cuda.synchronize()
         e = time.time()
@@ -116,8 +114,8 @@ def test(net):
             os.makedirs(os.path.join(args.output_dir, 'outputs', os.path.dirname(filenames[b_idx][1:])))
         with open(os.path.join(args.output_dir, 'outputs', filenames[b_idx][1:-3]+'lines.txt'), 'w') as f:
             f.write('\n'.join(' '.join(map(str, _lane)) for _lane in xy_coords))
-        # if b_idx > 2000:
-        #     break
+        if b_idx > 200:
+            break
         # create video visualization
         if args.save_viz:
             print("Save VIZ")
@@ -143,8 +141,10 @@ if __name__ == "__main__":
     heads = {'hm': 1, 'vaf': 2, 'haf': 1}
     # model = get_pose_net(num_layers=34, heads=heads, head_conv=256, down_ratio=4)
     from models.d4unet import D4UNet
-    from models.erf.erfnet import EAFNet
-    model = EAFNet({"hm": 1, "haf": 1, "vaf": 2})
+    # from models.erf.erfnet import EAFNet
+    from models.raw_resnet import ResNetAF
+    # model = EAFNet({"hm": 1, "haf": 1, "vaf": 2})
+    model = ResNetAF({"hm": 1, "haf": 1, "vaf": 2})
     print(model)
     # model = D4UNet()
     sd = torch.load(args.snapshot)
@@ -152,10 +152,10 @@ if __name__ == "__main__":
     new_sd = {}
     for k, v in sd.items():
         new_sd[k.replace("module.", '')] = v
-    sd = {}
-    for k, v in new_sd.items():
-        sd[k.replace("encoder.features.", '')] = v
-    model.load_state_dict(sd, strict=True)
+    # sd = {}
+    # for k, v in new_sd.items():
+    #     sd[k.replace("encoder.features.", '')] = v
+    model.load_state_dict(new_sd, strict=True)
     if args.cuda:
         model.cuda()
     print(model)

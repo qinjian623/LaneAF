@@ -1,5 +1,3 @@
-import numpy as np
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -10,14 +8,14 @@ class FocalLoss(nn.Module):
         super(FocalLoss, self).__init__()
         self.gamma = gamma
         self.alpha = alpha
-        if isinstance(alpha,(float, int)): self.alpha = torch.Tensor([1 - alpha, alpha])
+        if isinstance(alpha, (float, int)): self.alpha = torch.Tensor([1 - alpha, alpha])
         if isinstance(alpha, list): self.alpha = torch.Tensor(alpha)
         self.size_average = size_average
         self.eps = 1e-10
 
     def forward(self, outputs, targets):
-        outputs, targets = torch.sigmoid(outputs.view(-1, 1)), targets.view(-1, 1).long() # (N, 1)
-        outputs = torch.cat((1 - outputs, outputs), dim=1) # (N, 2)
+        outputs, targets = torch.sigmoid(outputs.view(-1, 1)), targets.view(-1, 1).long()  # (N, 1)
+        outputs = torch.cat((1 - outputs, outputs), dim=1)  # (N, 2)
 
         pt = outputs.gather(1, targets).view(-1)
         logpt = torch.log(outputs + self.eps)
@@ -29,9 +27,12 @@ class FocalLoss(nn.Module):
             at = self.alpha.gather(0, targets.data.view(-1))
             logpt = logpt * at
 
-        loss = -1 * (1 - pt)**self.gamma * logpt
-        if self.size_average: return loss.mean()
-        else: return loss.sum()
+        loss = -1 * (1 - pt) ** self.gamma * logpt
+        if self.size_average:
+            return loss.mean()
+        else:
+            return loss.sum()
+
 
 class IoULoss(nn.Module):
     def __init__(self, ignore_index=255):
@@ -41,9 +42,10 @@ class IoULoss(nn.Module):
     def forward(self, outputs, targets):
         mask = (targets != self.ignore_index).float()
         targets = targets.float()
-        num = torch.sum(outputs*targets*mask)
-        den = torch.sum(outputs*mask + targets*mask - outputs*targets*mask)
-        return 1 - num/den
+        num = torch.sum(outputs * targets * mask)
+        den = torch.sum(outputs * mask + targets * mask - outputs * targets * mask)
+        return 1 - num / den
+
 
 # borrowed from https://github.com/xingyizhou/CenterNet/blob/master/src/lib/models/losses.py
 def _neg_loss(pred, gt):
@@ -63,7 +65,7 @@ def _neg_loss(pred, gt):
     pos_loss = torch.log(pred) * torch.pow(1 - pred, 2) * pos_inds
     neg_loss = torch.log(1 - pred) * torch.pow(pred, 2) * neg_weights * neg_inds
 
-    num_pos  = pos_inds.float().sum()
+    num_pos = pos_inds.float().sum()
     pos_loss = pos_loss.sum()
     neg_loss = neg_loss.sum()
 
@@ -72,6 +74,7 @@ def _neg_loss(pred, gt):
     else:
         loss = loss - (pos_loss + neg_loss) / num_pos
     return loss
+
 
 class RegL1Loss(nn.Module):
     def __init__(self, ignore_index=255):
@@ -85,20 +88,21 @@ class RegL1Loss(nn.Module):
         loss = loss / (_mask.sum() + 1e-12)
         return loss
 
-class SADLoss(nn.Module):
-  def __init__(self):
-    super(SADLoss, self).__init__()
 
-  def forward(self, layer_ops):
-    loss = 0.0
-    upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
-    for l in range(len(layer_ops)-1):
-        layer_cur = torch.sigmoid(torch.sum(layer_ops[l]**2, dim=1).view(layer_ops[l].size()[0], -1))
-        if layer_ops[l].size()[2] == layer_ops[l+1].size()[2]:
-            layer_up = layer_ops[l+1].detach()
-        else:
-            layer_up = upsample(layer_ops[l+1].detach())
-        layer_next = torch.sigmoid(torch.sum(layer_up**2, dim=1).view(layer_ops[l+1].size()[0], -1))
-        loss += F.mse_loss(layer_cur, layer_next, reduction='mean')
-    print(loss.item())
-    return loss
+class SADLoss(nn.Module):
+    def __init__(self):
+        super(SADLoss, self).__init__()
+
+    def forward(self, layer_ops):
+        loss = 0.0
+        upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
+        for l in range(len(layer_ops) - 1):
+            layer_cur = torch.sigmoid(torch.sum(layer_ops[l] ** 2, dim=1).view(layer_ops[l].size()[0], -1))
+            if layer_ops[l].size()[2] == layer_ops[l + 1].size()[2]:
+                layer_up = layer_ops[l + 1].detach()
+            else:
+                layer_up = upsample(layer_ops[l + 1].detach())
+            layer_next = torch.sigmoid(torch.sum(layer_up ** 2, dim=1).view(layer_ops[l + 1].size()[0], -1))
+            loss += F.mse_loss(layer_cur, layer_next, reduction='mean')
+        print(loss.item())
+        return loss
