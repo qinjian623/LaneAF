@@ -59,7 +59,7 @@ if args.cuda:
 
 kwargs = {'batch_size': args.batch_size, 'shuffle': False, 'num_workers': 10}
 print(args.dataset_dir)
-test_loader = DataLoader(CULane(args.dataset_dir, 'val', False), **kwargs)
+test_loader = DataLoader(CULane(args.dataset_dir, 'test', False), **kwargs)
 
 # create file handles
 f_log = open(os.path.join(args.output_dir, "logs.txt"), "w")
@@ -80,6 +80,7 @@ def test(net):
         if args.cuda:
             input_img = input_img.cuda(non_blocking=True)
             input_seg = input_seg.cuda(non_blocking=True)
+
         torch.cuda.synchronize()
         s = time.time()
         # do the forward pass
@@ -98,7 +99,7 @@ def test(net):
         # decode AFs to get lane instances
         torch.cuda.synchronize()
         s = time.time()
-        seg_out = decodeAFs(mask_out[:, :, 0], vaf_out, haf_out, fg_thresh=128, err_thresh=3)
+        seg_out = decodeAFs(mask_out[:, :, 0], vaf_out, haf_out, fg_thresh=128, err_thresh=5)
 
         torch.cuda.synchronize()
         e = time.time()
@@ -107,19 +108,19 @@ def test(net):
         seg_out = match_multi_class(seg_out.astype(np.int64), input_seg[0, 0, :, :].detach().cpu().numpy().astype(np.int64))
 
         # get results in output structure
-        xy_coords = get_lanes_culane(seg_out, test_loader.dataset.samp_factor)
+        xy_coords = get_lanes_culane(seg_out, 16)
 
         # write results to file
         if not os.path.exists(os.path.join(args.output_dir, 'outputs', os.path.dirname(filenames[b_idx][1:]))):
             os.makedirs(os.path.join(args.output_dir, 'outputs', os.path.dirname(filenames[b_idx][1:])))
         with open(os.path.join(args.output_dir, 'outputs', filenames[b_idx][1:-3]+'lines.txt'), 'w') as f:
             f.write('\n'.join(' '.join(map(str, _lane)) for _lane in xy_coords))
-        if b_idx > 200:
-            break
+        # if b_idx > 500:
+        #     break
         # create video visualization
         if args.save_viz:
             print("Save VIZ")
-            img_out = create_viz(img, seg_out.astype(np.uint8), mask_out, vaf_out, haf_out)
+            img_out = create_viz(img, seg_out.astype(np.uint8), mask_out, vaf_out, haf_out, scale=16)
             for points in xy_coords:
                 for x, y in zip(points[::2], points[1::2]):
                     img_out = cv2.circle(img_out, (int(x), int(y)), radius=4, color=(0, 0, 255), thickness=-1)
@@ -140,11 +141,12 @@ def test(net):
 if __name__ == "__main__":
     heads = {'hm': 1, 'vaf': 2, 'haf': 1}
     # model = get_pose_net(num_layers=34, heads=heads, head_conv=256, down_ratio=4)
-    from models.d4unet import D4UNet
+    # from models.d4unet import D4UNet
     # from models.erf.erfnet import EAFNet
-    from models.raw_resnet import ResNetAF
+    from models.raw_resnet import ResNetAF, ResFPNAF
+
     # model = EAFNet({"hm": 1, "haf": 1, "vaf": 2})
-    model = ResNetAF({"hm": 1, "haf": 1, "vaf": 2})
+    model = ResFPNAF({"hm": 1, "haf": 1, "vaf": 2})
     print(model)
     # model = D4UNet()
     sd = torch.load(args.snapshot)
@@ -153,6 +155,7 @@ if __name__ == "__main__":
     for k, v in sd.items():
         new_sd[k.replace("module.", '')] = v
     # sd = {}
+
     # for k, v in new_sd.items():
     #     sd[k.replace("encoder.features.", '')] = v
     model.load_state_dict(new_sd, strict=True)

@@ -11,7 +11,7 @@ import torch.multiprocessing as mp
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
 from models.erf.encoder import ERFNet as Encoder
-from models.raw_resnet import ResNetAF
+from models.raw_resnet import ResNetAF, ResFPNAF
 
 matplotlib.use('Agg')
 from sklearn.metrics import accuracy_score, f1_score
@@ -76,14 +76,15 @@ def train(net, train_loader, criterions, optimizer, scheduler, f_log, epoch, gpu
     epoch_loss_seg, epoch_loss_vaf, epoch_loss_haf, epoch_loss, epoch_acc, epoch_f1 = list(), list(), list(), list(), list(), list()
     net.train()
     criterion_1, criterion_2, criterion_reg = criterions
-    metric_sampler_inter = 10
+    metric_sampler_inter = 20
     for b_idx, sample in enumerate(train_loader):
         input_img, _, input_mask, input_af = sample
         input_img = input_img.cuda(gpu, non_blocking=True)
         input_mask = input_mask.cuda(gpu, non_blocking=True)
         input_af = input_af.cuda(gpu, non_blocking=True)
-
+        # print(input_mask.shape, input_img.shape, input_af.shape)
         # zero gradients before forward pass
+
         optimizer.zero_grad()
 
         # do the forward pass
@@ -181,7 +182,8 @@ def worker(gpu, gpu_num, args):
         encoder = None
 
     torch.set_num_threads(1)
-    model = ResNetAF({"hm": 1, "haf": 1, "vaf": 2}, pretrained=True)
+    # model = ResNetAF({"hm": 1, "haf": 1, "vaf": 2}, pretrained=True)
+    model = ResFPNAF({"hm": 1, "haf": 1, "vaf": 2})
     torch.cuda.set_device(args.gpu)
 
     if args.snapshot is not None:
