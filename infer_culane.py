@@ -4,7 +4,7 @@ import time
 from datetime import datetime
 from statistics import mean
 import argparse
-
+from tqdm import tqdm
 import numpy as np
 import cv2
 from sklearn.metrics import accuracy_score, f1_score
@@ -26,6 +26,8 @@ parser.add_argument('--snapshot', type=str, default=None, help='path to pre-trai
 parser.add_argument('--seed', type=int, default=1, help='set seed to some constant value to reproduce experiments')
 parser.add_argument('--no-cuda', action='store_true', default=False, help='do not use cuda for training')
 parser.add_argument('--save-viz', action='store_true', default=False, help='save visualization depicting intermediate and final results')
+parser.add_argument('--scale', type=int, default=8)
+
 
 args = parser.parse_args()
 # check args
@@ -75,7 +77,7 @@ def test(net):
     net.eval()
     out_vid = None
 
-    for b_idx, sample in enumerate(test_loader):
+    for b_idx, sample in enumerate(tqdm(test_loader)):
         input_img, input_seg, input_mask, input_af = sample
         if args.cuda:
             input_img = input_img.cuda(non_blocking=True)
@@ -87,7 +89,7 @@ def test(net):
         outputs = net(input_img)[-1]
         torch.cuda.synchronize()
         e = time.time()
-        print(e - s)
+        # print(e - s)
         # convert to arrays
         img = tensor2image(input_img.detach(), np.array(test_loader.dataset.mean), 
             np.array(test_loader.dataset.std))
@@ -99,16 +101,16 @@ def test(net):
         # decode AFs to get lane instances
         torch.cuda.synchronize()
         s = time.time()
-        seg_out = decodeAFs(mask_out[:, :, 0], vaf_out, haf_out, fg_thresh=128, err_thresh=5)
+        seg_out = decodeAFs(mask_out[:, :, 0], vaf_out, haf_out, fg_thresh=128, err_thresh=3)
 
         torch.cuda.synchronize()
         e = time.time()
-        print(e - s)
+        # print(e - s)
         # re-assign lane IDs to match with ground truth
         seg_out = match_multi_class(seg_out.astype(np.int64), input_seg[0, 0, :, :].detach().cpu().numpy().astype(np.int64))
 
         # get results in output structure
-        xy_coords = get_lanes_culane(seg_out, 16)
+        xy_coords = get_lanes_culane(seg_out, args.scale * 2) # TODO xxxx
 
         # write results to file
         if not os.path.exists(os.path.join(args.output_dir, 'outputs', os.path.dirname(filenames[b_idx][1:]))):
@@ -120,7 +122,9 @@ def test(net):
         # create video visualization
         if args.save_viz:
             print("Save VIZ")
-            img_out = create_viz(img, seg_out.astype(np.uint8), mask_out, vaf_out, haf_out, scale=16)
+            img_out = create_viz(img, seg_out.astype(np.uint8), mask_out, vaf_out, haf_out, scale=args.scale)
+            img_out = cv2.resize(img_out, (1640, 590))
+            # print(len(xy_coords))
             for points in xy_coords:
                 for x, y in zip(points[::2], points[1::2]):
                     img_out = cv2.circle(img_out, (int(x), int(y)), radius=4, color=(0, 0, 255), thickness=-1)
@@ -130,7 +134,7 @@ def test(net):
             if out_vid is None:
                 out_vid = cv2.VideoWriter("VideoTest.avi", cv2.VideoWriter_fourcc(*'XVID'), 5.0, (1408, 1152)) 
             out_vid.write(img_out)
-        print('Done with image {} out of {}...'.format(min(args.batch_size*(b_idx+1), len(test_loader.dataset)), len(test_loader.dataset)))
+        # print('Done with image {} out of {}...'.format(min(args.batch_size*(b_idx+1), len(test_loader.dataset)), len(test_loader.dataset)))
 
     if args.save_viz:
         out_vid.release()
@@ -143,11 +147,10 @@ if __name__ == "__main__":
     # model = get_pose_net(num_layers=34, heads=heads, head_conv=256, down_ratio=4)
     # from models.d4unet import D4UNet
     # from models.erf.erfnet import EAFNet
-    from models.raw_resnet import ResNetAF, ResFPNAF
-
+    from models.raw_resnet import ResFPNAF, DLAFPNAF
     # model = EAFNet({"hm": 1, "haf": 1, "vaf": 2})
-    model = ResFPNAF({"hm": 1, "haf": 1, "vaf": 2})
-    print(model)
+    model = DLAFPNAF({"hm": 1, "haf": 1, "vaf": 2}, stride=args.scale)
+    # print(model)
     # model = D4UNet()
     sd = torch.load(args.snapshot)
     sd = sd['model']
@@ -161,6 +164,6 @@ if __name__ == "__main__":
     model.load_state_dict(new_sd, strict=True)
     if args.cuda:
         model.cuda()
-    print(model)
+    # print(model)
 
     test(model)

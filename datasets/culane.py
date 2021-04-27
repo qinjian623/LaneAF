@@ -60,7 +60,7 @@ def get_lanes_culane(seg_out, samp_factor):
                 x_ip, y_ip = coord_op_to_ip(x_op, y_op, samp_factor)
                 xs.append(x_ip)
                 ys.append(y_ip)
-        if len(xs) >= 10:
+        if len(xs) >= 5:
             cs.append(CubicSpline(ys, xs, extrapolate=False))
         else:
             cs.append(None)
@@ -77,7 +77,8 @@ def get_lanes_culane(seg_out, samp_factor):
                 else:
                     lane += [_x, _y]
         else:
-            print("Lane completely missed!")
+            pass
+            # print("Lane completely missed!")
         if len(lane) <= 16:
             continue
         lanes.append(lane)
@@ -93,7 +94,7 @@ class CULane(Dataset):
         self.input_size = (832, 288)  # W, H # original image res: (590, 1640) -> (590-14, 1640+24)/2
         # if image_set in ["val", "test"]:
         #     self.input_size = (1664, 576)
-        self.output_stride = 16
+        self.output_stride = 8
         self.output_size = list([i // self.output_stride for i in self.input_size])  # TODO valid dividing
         if image_set in ["val", "test"]:
             self.training_scales_range = (.5, .5)
@@ -109,8 +110,7 @@ class CULane(Dataset):
         self.std = [0.229, 0.224, 0.225]  # [1, 1, 1]
         self.ignore_label = 255
 
-        if img_transforms is not None:
-            pass
+        self.img_ts = img_transforms
 
         if self.random_transforms:
             self.transforms = transforms.Compose([
@@ -135,17 +135,17 @@ class CULane(Dataset):
         print("Creating Index DONE")
 
     def create_index(self):
-        if self.image_set == "test":
-            listfile = os.path.join(self.data_dir_path, "list", "test_split", "test0_normal.txt")
-        else:
-            listfile = os.path.join(self.data_dir_path, "list", "{}.txt".format(self.image_set))
+        # if self.image_set == "test":
+        #     listfile = os.path.join(self.data_dir_path, "list", "test_split", "test0_normal.txt")
+        # else:
+        listfile = os.path.join(self.data_dir_path, "list", "{}.txt".format(self.image_set))
         if not os.path.exists(listfile):
             raise FileNotFoundError("List file doesn't exist. Label has to be generated! ...")
         with open(listfile) as f:
             for line in f:
                 l = line.strip()
                 if self.image_set == 'test':
-                    path = os.path.join(self.data_dir_path, l[0:])
+                    path = os.path.join(self.data_dir_path, l[1:])
                     self.img_list.append(path)  # l[1:]  get rid of the first '/' so as for os.path.join
                 else:
                     self.img_list.append(os.path.join(self.data_dir_path,
@@ -187,6 +187,8 @@ class CULane(Dataset):
 
         # convert all outputs to torch tensors
         img = torch.from_numpy(img).permute(2, 0, 1).contiguous().float()
+        if self.img_ts is not None:
+            img = self.img_ts(img)
         mask = torch.from_numpy(mask).contiguous().float().unsqueeze(0)
         seg = torch.from_numpy(seg[:, :, 0]).contiguous().long().unsqueeze(0)
         af = torch.from_numpy(af).permute(2, 0, 1).contiguous().float()
