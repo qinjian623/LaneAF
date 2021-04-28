@@ -149,7 +149,7 @@ if __name__ == "__main__":
     # from models.erf.erfnet import EAFNet
     from models.raw_resnet import ResFPNAF, DLAFPNAF
     # model = EAFNet({"hm": 1, "haf": 1, "vaf": 2})
-    model = DLAFPNAF({"hm": 1, "haf": 1, "vaf": 2}, stride=args.scale)
+    model = ResFPNAF({"hm": 1, "haf": 1, "vaf": 2})
     # print(model)
     # model = D4UNet()
     sd = torch.load(args.snapshot)

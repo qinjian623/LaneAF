@@ -11,7 +11,7 @@ import torch.multiprocessing as mp
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
 from models.erf.encoder import ERFNet as Encoder
-from models.raw_resnet import DLAFPNAF
+from models.raw_resnet import DLAFPNAF, ResNetAF, ResFPNAF
 
 matplotlib.use('Agg')
 from sklearn.metrics import accuracy_score, f1_score
@@ -183,7 +183,7 @@ def worker(gpu, gpu_num, args):
 
     torch.set_num_threads(1)
     # model = ResNetAF({"hm": 1, "haf": 1, "vaf": 2}, pretrained=True)
-    model = DLAFPNAF({"hm": 1, "haf": 1, "vaf": 2})
+    model = ResFPNAF({"hm": 1, "haf": 1, "vaf": 2})
     torch.cuda.set_device(args.gpu)
 
     if args.snapshot is not None:
@@ -222,9 +222,11 @@ def worker(gpu, gpu_num, args):
 
     scheduler = CosineAnnealingLR(optimizer, args.epochs)
     import torchvision.transforms as transforms
-    augs = transforms.Compose([transforms.RandomErasing(), transforms.RandomGrayscale(),
-                               transforms.ColorJitter(brightness=0.2, contrast=0.2, hue=0.1, saturation=0.2)])
-    train_dataset = CULane(args.dataset_dir, 'train', args.random_transforms, img_transforms=augs)
+    augs = transforms.Compose([transforms.RandomGrayscale(),
+                               transforms.ColorJitter(brightness=0.05, contrast=0.05, saturation=0.05),
+                               # transforms.RandomErasing(),
+                               ])
+    train_dataset = CULane(args.dataset_dir, 'train', args.random_transforms, img_transforms=None)
     train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
     kwargs = {'batch_size': args.batch_size // gpu_num, 'num_workers': args.workers,
               'sampler': train_sampler}

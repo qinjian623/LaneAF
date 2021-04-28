@@ -115,8 +115,8 @@ class FPNFusion(nn.Module):
 
 
 class ResNetAF(nn.Module):
-    def __init__(self, heads, pretrained=True):
-        super(ResNetAF, self).__init__()
+    def __init__(self, heads, pretrained=True, stride=8):
+        super(ResNetAF, self).__init__(heads, False, stride=stride)
         bb = tv.models.resnet18(pretrained)
         self.bb = nn.Sequential(
             bb.conv1,
@@ -136,9 +136,10 @@ class ResNetAF(nn.Module):
 
 
 class FPNAF(nn.Module):
-    def __init__(self, heads, instance_norm=True, stride=8):
+    def __init__(self, heads, instance_norm=False, stride=8):
         super(FPNAF, self).__init__()
         print("FPN AF Stride: {}".format(stride))
+        print("With IN: {}".format(instance_norm))
         # TODO xxx
         if stride == 8:
             self.fpn_neck = FPNFusion(['s32', 's16', 's8'], 128, mode='concat')
@@ -167,14 +168,13 @@ class DLAFPNAF(FPNAF):
         super(DLAFPNAF, self).__init__(heads, instance_norm, stride=stride)
 
     def __init_fpn__(self, stride):
+        bb = timm.create_model('dla34', pretrained=True)
         if stride == 8:
-            bb = timm.create_model('dla34', pretrained=True)
             fpn = BackboneWithFPN(bb, return_layers={'level3': 's8', 'level4': 's16', 'level5': 's32'},
                                   in_channels_list=[128, 256, 512],
                                   out_channels=128)
             return fpn
         elif stride == 16:
-            bb = timm.create_model('dla34', pretrained=True)
             fpn = BackboneWithFPN(bb, return_layers={'level5': 's32', 'level4': 's16'},
                                   in_channels_list=[256, 512],
                                   out_channels=128)
@@ -185,10 +185,16 @@ class ResFPNAF(FPNAF):
     def __init__(self, heads):
         super(ResFPNAF, self).__init__(heads)
 
-    def __init_fpn__(self):
-        bb = tv.models.resnet18(True)
-        fpn = BackboneWithFPN(bb, return_layers={'layer4': 's32', 'layer3': 's16'}, in_channels_list=[256, 512],
-                              out_channels=128)
+    def __init_fpn__(self, stride):
+        bb = tv.models.resnet34(True)
+        if stride == 8:
+            fpn = BackboneWithFPN(bb, return_layers={'layer2': 's8', 'layer3': 's16', 'layer4': 's32'},
+                                  in_channels_list=[128, 256, 512],
+                                  out_channels=128)
+            return fpn
+        elif stride == 16:
+            fpn = BackboneWithFPN(bb, return_layers={'layer4': 's32', 'layer3': 's16'}, in_channels_list=[256, 512],
+                                  out_channels=128)
         return fpn
 
 
@@ -209,8 +215,38 @@ class DLAAF(ResNetAF):
 
 if __name__ == '__main__':
     # m = DLAAF({"hm": 1, "vaf": 2, "haf": 1})
+    TIMES =20
+    m = tv.models.resnet34()
+    d = torch.rand(1, 3, 224, 224)
+    import time
+    s = time.time()
+    for i in range(TIMES):
+        r = m(d)
+    e = time.time()
+    print((e - s)/TIMES)
+
+    d = torch.rand((1, 3, 832, 288))
+    s = time.time()
+    for i in range(TIMES):
+        r = m(d)
+    e = time.time()
+    print((e - s)/TIMES)
+
+    m = ResFPNAF({"hm": 1, "vaf": 2, "haf": 1})
+    d = torch.rand((1, 3, 832, 288))
+    s = time.time()
+    for i in range(TIMES):
+        r = m(d)
+    e = time.time()
+    print((e - s) / TIMES)
+
     m = DLAFPNAF({"hm": 1, "vaf": 2, "haf": 1})
-    d = torch.rand((1, 3, 512, 512))
-    for k, v in m(d)[0].items():
-        print(k, v.shape)
+    # d = torch.rand((1, 3, 832, 288))
+    s = time.time()
+    for i in range(TIMES):
+        r = m(d)
+    e = time.time()
+    print((e - s) / TIMES)
+    # for k, v in m(d)[0].items():
+    #     print(k, v.shape)
     # print(m)
