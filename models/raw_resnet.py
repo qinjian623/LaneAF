@@ -49,7 +49,7 @@ class AFHeadRes(nn.Module):
 class FPNFusion(nn.Module):
     def __init__(self, names, channels, mode='concat'):
         super(FPNFusion, self).__init__()
-        assert (len(names) == 2 or len(names) == 3)
+        assert (len(names) == 2 or len(names) == 3 or len(names) == 4)
         assert mode in ["add", "concat"]
         self._names = names
 
@@ -75,6 +75,31 @@ class FPNFusion(nn.Module):
                     nn.ReLU(),
                 )
                 self._cv1 = nn.Sequential(
+                    nn.Conv2d(channels * 2, channels, kernel_size=5, stride=1, padding=2),
+                    nn.BatchNorm2d(channels),
+                    nn.ReLU(),
+                    nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1),
+                    nn.BatchNorm2d(channels),
+                    nn.ReLU(),
+                )
+            if len(self._names) == 4:
+                self._cv0 = nn.Sequential(
+                    nn.Conv2d(channels * 2, channels, kernel_size=5, stride=1, padding=2),
+                    nn.BatchNorm2d(channels),
+                    nn.ReLU(),
+                    nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1),
+                    nn.BatchNorm2d(channels),
+                    nn.ReLU(),
+                )
+                self._cv1 = nn.Sequential(
+                    nn.Conv2d(channels * 2, channels, kernel_size=5, stride=1, padding=2),
+                    nn.BatchNorm2d(channels),
+                    nn.ReLU(),
+                    nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1),
+                    nn.BatchNorm2d(channels),
+                    nn.ReLU(),
+                )
+                self._cv2 = nn.Sequential(
                     nn.Conv2d(channels * 2, channels, kernel_size=5, stride=1, padding=2),
                     nn.BatchNorm2d(channels),
                     nn.ReLU(),
@@ -111,6 +136,27 @@ class FPNFusion(nn.Module):
                 out = self._cv1(torch.cat([x0, x1], dim=1))
             else:
                 out = x0 + x1
+        if len(self._names) == 4:
+            x0 = self._up(xs[self._names[0]])
+            x1 = xs[self._names[1]]
+            if self._mode == "concat":
+                out = self._cv0(torch.cat([x0, x1], dim=1))
+            else:
+                out = x0 + x1
+
+            x0 = self._up(out)
+            x1 = xs[self._names[2]]
+            if self._mode == "concat":
+                out = self._cv1(torch.cat([x0, x1], dim=1))
+            else:
+                out = x0 + x1
+
+            x0 = self._up(out)
+            x1 = xs[self._names[3]]
+            if self._mode == "concat":
+                out = self._cv2(torch.cat([x0, x1], dim=1))
+            else:
+                out = x0 + x1
         return out
 
 
@@ -140,11 +186,15 @@ class FPNAF(nn.Module):
         super(FPNAF, self).__init__()
         print("FPN AF Stride: {}".format(stride))
         print("With IN: {}".format(instance_norm))
+
         # TODO xxx
         if stride == 8:
             self.fpn_neck = FPNFusion(['s32', 's16', 's8'], 128, mode='concat')
         elif stride == 16:
             self.fpn_neck = FPNFusion(['s32', 's16'], 128, mode='concat')
+        elif stride == 4:
+            self.fpn_neck = FPNFusion(['s32', 's16', 's8', 's4'], 128, mode='concat')
+
         self.head = AFHeadRes(128, heads=heads)
         self.fpn = self.__init_fpn__(stride)
         if instance_norm:
@@ -169,6 +219,12 @@ class DLAFPNAF(FPNAF):
 
     def __init_fpn__(self, stride):
         bb = timm.create_model('dla34', pretrained=True)
+        if stride == 4:
+            fpn = BackboneWithFPN(bb, return_layers={'level2': 's4', 'level3': 's8', 'level4': 's16', 'level5': 's32'},
+                                  in_channels_list=[64, 128, 256, 512],
+                                  out_channels=128)
+            return fpn
+
         if stride == 8:
             fpn = BackboneWithFPN(bb, return_layers={'level3': 's8', 'level4': 's16', 'level5': 's32'},
                                   in_channels_list=[128, 256, 512],
@@ -240,7 +296,7 @@ if __name__ == '__main__':
     e = time.time()
     print((e - s) / TIMES)
 
-    m = DLAFPNAF({"hm": 1, "vaf": 2, "haf": 1})
+    m = DLAFPNAF({"hm": 1, "vaf": 2, "haf": 1}, stride=4)
     # d = torch.rand((1, 3, 832, 288))
     s = time.time()
     for i in range(TIMES):

@@ -183,7 +183,8 @@ def worker(gpu, gpu_num, args):
 
     torch.set_num_threads(1)
     # model = ResNetAF({"hm": 1, "haf": 1, "vaf": 2}, pretrained=True)
-    model = ResFPNAF({"hm": 1, "haf": 1, "vaf": 2})
+    # model = ResFPNAF({"hm": 1, "haf": 1, "vaf": 2})
+    model = DLAFPNAF({"hm": 1, "haf": 1, "vaf": 2}, stride=4)
     torch.cuda.set_device(args.gpu)
 
     if args.snapshot is not None:

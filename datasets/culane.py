@@ -94,7 +94,7 @@ class CULane(Dataset):
         self.input_size = (832, 288)  # W, H # original image res: (590, 1640) -> (590-14, 1640+24)/2
         # if image_set in ["val", "test"]:
         #     self.input_size = (1664, 576)
-        self.output_stride = 8
+        self.output_stride = 4
         self.output_size = list([i // self.output_stride for i in self.input_size])  # TODO valid dividing
         if image_set in ["val", "test"]:
             self.training_scales_range = (.5, .5)
