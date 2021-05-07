@@ -272,7 +272,7 @@ class DLAAF(ResNetAF):
 if __name__ == '__main__':
     # m = DLAAF({"hm": 1, "vaf": 2, "haf": 1})
     TIMES =20
-    m = tv.models.resnet34()
+    m = tv.models.resnet50()
     d = torch.rand(1, 3, 224, 224)
     import time
     s = time.time()
@@ -303,6 +303,8 @@ if __name__ == '__main__':
         r = m(d)
     e = time.time()
     print((e - s) / TIMES)
+
+
     # for k, v in m(d)[0].items():
     #     print(k, v.shape)
     # print(m)
