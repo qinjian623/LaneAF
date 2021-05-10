@@ -94,7 +94,7 @@ class CULane(Dataset):
         self.input_size = (832, 288)  # W, H # original image res: (590, 1640) -> (590-14, 1640+24)/2
         # if image_set in ["val", "test"]:
         #     self.input_size = (1664, 576)
-        self.output_stride = 4
+        self.output_stride = 8
         self.output_size = list([i // self.output_stride for i in self.input_size])  # TODO valid dividing
         if image_set in ["val", "test"]:
             self.training_scales_range = (.5, .5)
@@ -142,7 +142,9 @@ class CULane(Dataset):
         if not os.path.exists(listfile):
             raise FileNotFoundError("List file doesn't exist. Label has to be generated! ...")
         with open(listfile) as f:
-            for line in f:
+            for lid, line in enumerate(f):
+                # if lid > 2000:
+                #     break
                 l = line.strip()
                 if self.image_set == 'test':
                     path = os.path.join(self.data_dir_path, l[1:])
@@ -158,7 +160,7 @@ class CULane(Dataset):
 
     def __getitem__(self, idx):
         img = cv2.imread(self.img_list[idx]).astype(np.float32) / 255.  # (H, W, 3)
-        if self.image_set in ["test", "val"]:
+        if self.image_set in ["test"]:
             seg = np.zeros(img.shape[:2])  # Empty Test Label
             # seg = cv2.resize(seg, self.input_size, interpolation=cv2.INTER_NEAREST)
             # img = cv2.resize(img, self.input_size, interpolation=cv2.INTER_LINEAR)

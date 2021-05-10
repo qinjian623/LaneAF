@@ -21,7 +21,17 @@ print(types)
 for line in js['segmentation']:
     points = line['polygon']
     points = np.array(points, np.int32)
-    cv2.fillPoly(canvas, pts=[points], color=tc[line['type']])
+    if line['type'] == 'Traffic.sign':
+        cv2.fillPoly(canvas, pts=[points], color=tc[line['type']])
+
+for line in js['segmentation']:
+    points = line['polygon']
+    points = np.array(points, np.int32)
+    if line['type'] is None:
+        cv2.putText(canvas, "None", (points[0][0], points[0][1]), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0))
+        cv2.fillPoly(canvas, pts=[points], color=(0, 0, 0))
+    else:
+        cv2.putText(canvas, line['type'], (points[0][0], points[0][1]), cv2.FONT_HERSHEY_SIMPLEX, 1, (128, 128, 128))
 
 canvas = cv2.resize(canvas, (960, 540))
 

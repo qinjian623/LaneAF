@@ -71,6 +71,67 @@ def save_model(net, optimizer, epoch, save_path):
         torch.save(state, model_path)
 
 
+def save_best(net, optimizer, save_path):
+    if isinstance(net, torch.nn.parallel.DistributedDataParallel):
+        net = net.module
+    if dist.get_rank() == 0:
+        model_state_dict = net.state_dict()
+        state = {'model': model_state_dict, 'optimizer': optimizer.state_dict()}
+        assert os.path.exists(save_path)
+        model_path = os.path.join(save_path, 'best.pth')
+        torch.save(state, model_path)
+
+
+# validation function
+def val(net, val_loader, f_log, gpu):
+    epoch_acc, epoch_f1 = list(), list()
+    net.eval()
+
+    for b_idx, sample in enumerate(val_loader):
+        input_img, input_seg, input_mask, input_af = sample
+        input_img = input_img.cuda(gpu, non_blocking=True)
+        input_mask = input_mask.cuda(gpu, non_blocking=True)
+
+        # do the forward pass
+        outputs = net(input_img)[-1]
+
+        # calculate losses and metrics
+        _mask = (input_mask != val_loader.dataset.ignore_label).float()
+
+        pred = torch.sigmoid(outputs['hm']).detach().cpu().numpy().ravel()
+        target = input_mask.detach().cpu().numpy().ravel()
+        pred[target == val_loader.dataset.ignore_label] = 0
+        target[target == val_loader.dataset.ignore_label] = 0
+        val_acc = accuracy_score((pred > 0.5).astype(np.int64), (target > 0.5).astype(np.int64))
+        val_f1 = f1_score((target > 0.5).astype(np.int64), (pred > 0.5).astype(np.int64), zero_division=1)
+        epoch_acc.append(val_acc)
+        epoch_f1.append(val_f1)
+
+    # now that the epoch is completed calculate statistics and store logs
+
+    avg_acc = torch.tensor(mean(epoch_acc)).cuda(gpu)
+    avg_f1 = torch.tensor(mean(epoch_f1)).cuda(gpu)
+    # Sync whole dataset, no need this in training.
+    dist.all_reduce(avg_f1)
+    dist.all_reduce(avg_acc)
+
+    avg_f1 /= dist.get_world_size()
+    avg_acc /= dist.get_world_size()
+
+    if dist.get_rank() == 0:
+        print("\n------------------------ Validation metrics ------------------------")
+        f_log.write("\n------------------------ Validation metrics ------------------------\n")
+        print("Average accuracy for epoch = {:.4f}".format(avg_acc))
+        f_log.write("Average accuracy for epoch = {:.4f}\n".format(avg_acc))
+        print("Average F1 score for epoch = {:.4f}".format(avg_f1))
+        f_log.write("Average F1 score for epoch = {:.4f}\n".format(avg_f1))
+        print("--------------------------------------------------------------------\n")
+        f_log.write("--------------------------------------------------------------------\n\n")
+
+    return avg_acc.cpu().item(), avg_f1.cpu().item()
+
+
+
 # training function
 def train(net, train_loader, criterions, optimizer, scheduler, f_log, epoch, gpu):
     epoch_loss_seg, epoch_loss_vaf, epoch_loss_haf, epoch_loss, epoch_acc, epoch_f1 = list(), list(), list(), list(), list(), list()
@@ -184,7 +245,7 @@ def worker(gpu, gpu_num, args):
     torch.set_num_threads(1)
     # model = ResNetAF({"hm": 1, "haf": 1, "vaf": 2}, pretrained=True)
     # model = ResFPNAF({"hm": 1, "haf": 1, "vaf": 2})
-    model = DLAFPNAF({"hm": 1, "haf": 1, "vaf": 2}, stride=4)
+    model = DLAFPNAF({"hm": 1, "haf": 1, "vaf": 2}, stride=8)
     torch.cuda.set_device(args.gpu)
 
     if args.snapshot is not None:
@@ -217,28 +278,40 @@ def worker(gpu, gpu_num, args):
     criterion_1.cuda(args.gpu)
     criterion_2 = IoULoss().cuda(args.gpu)
     criterion_reg = RegL1Loss().cuda(args.gpu)
-    # optimizer = optim.Adam(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
-    optimizer = optim.SGD(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
+    optimizer = optim.Adam(model.parameters(), lr=1e-4, weight_decay=args.weight_decay)
+    # optimizer = optim.SGD(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
     # Loss && Optimizer ready
 
+    # TODO warmup
     scheduler = CosineAnnealingLR(optimizer, args.epochs)
+    # scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=15, gamma=0.2)
     import torchvision.transforms as transforms
-    augs = transforms.Compose([transforms.RandomGrayscale(),
-                               transforms.ColorJitter(brightness=0.05, contrast=0.05, saturation=0.05),
-                               # transforms.RandomErasing(),
-                               ])
-    train_dataset = CULane(args.dataset_dir, 'train', args.random_transforms, img_transforms=None)
+    augs = transforms.Compose([
+        transforms.RandomGrayscale(),
+        transforms.ColorJitter(brightness=0.05, contrast=0.05, saturation=0.05),
+        transforms.RandomErasing(p=0.1),])
+    train_dataset = CULane(args.dataset_dir, 'train', args.random_transforms, img_transforms=augs)
     train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
     kwargs = {'batch_size': args.batch_size // gpu_num, 'num_workers': args.workers,
               'sampler': train_sampler}
     train_loader = DataLoader(train_dataset, **kwargs, pin_memory=True)
+
+    val_dataset = CULane(args.dataset_dir, 'val', False)
+    val_sampler = torch.utils.data.distributed.DistributedSampler(val_dataset, shuffle=False)
+    kwargs = {'batch_size': args.batch_size // gpu_num, 'num_workers': args.workers, 'sampler': val_sampler}
+    val_loader = DataLoader(val_dataset, **kwargs)
+
     # TODO resume && finetune
+    best_f1 = 0.0
     for epoch in range(args.epochs):
         train_sampler.set_epoch(epoch)
         train(model, train_loader, [criterion_1, criterion_2, criterion_reg], optimizer, scheduler, f_log, epoch,
               args.gpu)
-        # val(model, val_loader, f_log, args.gpu)
+        acc, f1 = val(model, val_loader, f_log, args.gpu)
         save_model(model, optimizer, epoch, args.output_dir)
+        if f1 > best_f1:
+            best_f1 = f1
+            save_best(model, optimizer, args.output_dir)
 
 
 def mp_train():
