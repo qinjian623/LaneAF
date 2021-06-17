@@ -3,13 +3,15 @@ import json
 import os
 from datetime import datetime
 from statistics import mean
-
+import torch.nn as nn
 import matplotlib
 import numpy as np
 import torch.distributed as dist
 import torch.multiprocessing as mp
 from torch.optim.lr_scheduler import CosineAnnealingLR
+from tqdm import tqdm
 
+from datasets.hmlane import HMLane
 from models.erf.encoder import ERFNet as Encoder
 from models.raw_resnet import DLAFPNAF, ResNetAF, ResFPNAF
 
@@ -44,7 +46,6 @@ parser.add_argument('--seed', type=int, default=None, help='set seed to some con
 parser.add_argument('--no-cuda', action='store_true', default=False, help='do not use cuda for training')
 parser.add_argument('--random-transforms', action='store_true', default=True,
                     help='apply random transforms to input during training')
-
 parser.add_argument('-j', '--workers', default=10, type=int, metavar='N',
                     help='number of data loading workers (default: 10)')
 parser.add_argument('--world-size', default=1, type=int,
@@ -86,26 +87,28 @@ def save_best(net, optimizer, save_path):
 def val(net, val_loader, f_log, gpu):
     epoch_acc, epoch_f1 = list(), list()
     net.eval()
+    with tqdm(total=len(val_loader)) as t:
+        for b_idx, sample in enumerate(val_loader):
+            input_img, input_seg, input_mask, input_af = sample
+            input_img = input_img.cuda(gpu, non_blocking=True)
+            input_mask = input_mask.cuda(gpu, non_blocking=True)
 
-    for b_idx, sample in enumerate(val_loader):
-        input_img, input_seg, input_mask, input_af = sample
-        input_img = input_img.cuda(gpu, non_blocking=True)
-        input_mask = input_mask.cuda(gpu, non_blocking=True)
+            # do the forward pass
+            outputs = net(input_img)[-1]
 
-        # do the forward pass
-        outputs = net(input_img)[-1]
+            # calculate losses and metrics
+            _mask = (input_mask != val_loader.dataset.ignore_label).float()
 
-        # calculate losses and metrics
-        _mask = (input_mask != val_loader.dataset.ignore_label).float()
-
-        pred = torch.sigmoid(outputs['hm']).detach().cpu().numpy().ravel()
-        target = input_mask.detach().cpu().numpy().ravel()
-        pred[target == val_loader.dataset.ignore_label] = 0
-        target[target == val_loader.dataset.ignore_label] = 0
-        val_acc = accuracy_score((pred > 0.5).astype(np.int64), (target > 0.5).astype(np.int64))
-        val_f1 = f1_score((target > 0.5).astype(np.int64), (pred > 0.5).astype(np.int64), zero_division=1)
-        epoch_acc.append(val_acc)
-        epoch_f1.append(val_f1)
+            pred = torch.sigmoid(outputs['hm']).detach().cpu().numpy().ravel()
+            target = input_mask.detach().cpu().numpy().ravel()
+            pred[target == val_loader.dataset.ignore_label] = 0
+            target[target == val_loader.dataset.ignore_label] = 0
+            val_acc = accuracy_score((pred > 0.5).astype(np.int64), (target > 0.5).astype(np.int64))
+            val_f1 = f1_score((target > 0.5).astype(np.int64), (pred > 0.5).astype(np.int64), zero_division=1)
+            epoch_acc.append(val_acc)
+            epoch_f1.append(val_f1)
+            t.set_postfix(F1="{:.6f}".format(val_f1))
+            t.update()
 
     # now that the epoch is completed calculate statistics and store logs
 
@@ -138,53 +141,56 @@ def train(net, train_loader, criterions, optimizer, scheduler, f_log, epoch, gpu
     net.train()
     criterion_1, criterion_2, criterion_reg = criterions
     metric_sampler_inter = 20
-    for b_idx, sample in enumerate(train_loader):
-        input_img, _, input_mask, input_af = sample
-        input_img = input_img.cuda(gpu, non_blocking=True)
-        input_mask = input_mask.cuda(gpu, non_blocking=True)
-        input_af = input_af.cuda(gpu, non_blocking=True)
-        # print(input_mask.shape, input_img.shape, input_af.shape)
-        # zero gradients before forward pass
+    with tqdm(total=len(train_loader)) as t:
+        for b_idx, sample in enumerate(train_loader):
+            input_img, _, input_mask, input_af = sample
+            input_img = input_img.cuda(gpu, non_blocking=True)
+            input_mask = input_mask.cuda(gpu, non_blocking=True)
+            input_af = input_af.cuda(gpu, non_blocking=True)
+            # zero gradients before forward pass
 
-        optimizer.zero_grad()
+            optimizer.zero_grad()
 
-        # do the forward pass
-        outputs = net(input_img)[-1]
+            # do the forward pass
+            outputs = net(input_img)[-1]
 
-        # calculate losses and metrics
-        _mask = (input_mask != train_loader.dataset.ignore_label).float()
-        loss_seg = criterion_1(outputs['hm'] * _mask, input_mask * _mask) + criterion_2(torch.sigmoid(outputs['hm']),
-                                                                                        input_mask)
-        loss_vaf = 0.5 * criterion_reg(outputs['vaf'], input_af[:, :2, :, :], input_mask)
-        loss_haf = 0.5 * criterion_reg(outputs['haf'], input_af[:, 2:3, :, :], input_mask)
+            # calculate losses and metrics
+            _mask = (input_mask != train_loader.dataset.ignore_label).float()
+            loss_seg = criterion_1(outputs['hm'] * _mask, input_mask * _mask) + criterion_2(torch.sigmoid(outputs['hm']),
+                                                                                            input_mask)
+            loss_vaf = 0.5 * criterion_reg(outputs['vaf'], input_af[:, :2, :, :], input_mask)
+            loss_haf = 0.5 * criterion_reg(outputs['haf'], input_af[:, 2:3, :, :], input_mask)
 
-        epoch_loss_seg.append(loss_seg.item())
-        epoch_loss_vaf.append(loss_vaf.item())
-        epoch_loss_haf.append(loss_haf.item())
-        loss = loss_seg + loss_vaf + loss_haf
-        epoch_loss.append(loss.item())
+            epoch_loss_seg.append(loss_seg.item())
+            epoch_loss_vaf.append(loss_vaf.item())
+            epoch_loss_haf.append(loss_haf.item())
+            loss = loss_seg + loss_vaf + loss_haf
+            epoch_loss.append(loss.item())
 
-        # Make training faster
-        if b_idx % metric_sampler_inter == 0:
-            pred = torch.sigmoid(outputs['hm']).detach().cpu().numpy().ravel()
-            target = input_mask.detach().cpu().numpy().ravel()
-            pred[target == train_loader.dataset.ignore_label] = 0
-            target[target == train_loader.dataset.ignore_label] = 0
-            train_acc = accuracy_score((pred > 0.5).astype(np.int64), (target > 0.5).astype(np.int64))
-            train_f1 = f1_score((target > 0.5).astype(np.int64), (pred > 0.5).astype(np.int64), zero_division=1)
-            epoch_acc.append(train_acc)
-            epoch_f1.append(train_f1)
+            # Make training faster
+            if b_idx % metric_sampler_inter == 0:
+                pred = torch.sigmoid(outputs['hm']).detach().cpu().numpy().ravel()
+                target = input_mask.detach().cpu().numpy().ravel()
+                pred[target == train_loader.dataset.ignore_label] = 0
+                target[target == train_loader.dataset.ignore_label] = 0
+                train_acc = accuracy_score((pred > 0.5).astype(np.int64), (target > 0.5).astype(np.int64))
+                train_f1 = f1_score((target > 0.5).astype(np.int64), (pred > 0.5).astype(np.int64), zero_division=1)
+                epoch_acc.append(train_acc)
+                epoch_f1.append(train_f1)
+                t.set_postfix(F1="{:.6f}".format(train_f1))
 
-        loss.backward()
-        optimizer.step()
-        if b_idx % args.log_schedule == 0 and dist.get_rank() == 0:
-            print('Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}\tF1-score: {:.4f} \tSegloss: {:.4f}'.format(
-                epoch, (b_idx + 1) * args.batch_size, len(train_loader.dataset),
-                       100. * (b_idx + 1) * args.batch_size / len(train_loader.dataset), loss.item(), train_f1,
-                loss_seg.item()))
-            f_log.write('Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}\tF1-score: {:.4f}\n'.format(
-                epoch, (b_idx + 1) * args.batch_size, len(train_loader.dataset),
-                       100. * (b_idx + 1) * args.batch_size / len(train_loader.dataset), loss.item(), train_f1))
+            loss.backward()
+            optimizer.step()
+
+            t.update()
+            if b_idx % args.log_schedule == 0 and dist.get_rank() == 0:
+                # print('Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}\tF1-score: {:.4f} \tSegloss: {:.4f}'.format(
+                #     epoch, (b_idx + 1) * args.batch_size, len(train_loader.dataset),
+                #            100. * (b_idx + 1) * args.batch_size / len(train_loader.dataset), loss.item(), train_f1,
+                #     loss_seg.item()))
+                f_log.write('Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}\tF1-score: {:.4f}\n'.format(
+                    epoch, (b_idx + 1) * args.batch_size, len(train_loader.dataset),
+                           100. * (b_idx + 1) * args.batch_size / len(train_loader.dataset), loss.item(), train_f1))
 
     scheduler.step()
     # now that the epoch is completed calculate statistics and store logs
@@ -245,7 +251,7 @@ def worker(gpu, gpu_num, args):
     torch.set_num_threads(1)
     # model = ResNetAF({"hm": 1, "haf": 1, "vaf": 2}, pretrained=True)
     # model = ResFPNAF({"hm": 1, "haf": 1, "vaf": 2})
-    model = DLAFPNAF({"hm": 1, "haf": 1, "vaf": 2}, stride=8)
+    model = DLAFPNAF({"hm": 1, "haf": 1, "vaf": 2}, stride=4)
     torch.cuda.set_device(args.gpu)
 
     if args.snapshot is not None:
@@ -258,6 +264,7 @@ def worker(gpu, gpu_num, args):
         model.load_state_dict(new_sd, strict=True)
 
     model.cuda(args.gpu)
+    model = nn.SyncBatchNorm.convert_sync_batchnorm(model)
     model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
     print("Model ready...")
     dist_print(model)
@@ -278,8 +285,9 @@ def worker(gpu, gpu_num, args):
     criterion_1.cuda(args.gpu)
     criterion_2 = IoULoss().cuda(args.gpu)
     criterion_reg = RegL1Loss().cuda(args.gpu)
-    optimizer = optim.Adam(model.parameters(), lr=1e-4, weight_decay=args.weight_decay)
+    optimizer = optim.Adam(model.parameters(), lr=2e-3, weight_decay=args.weight_decay)
     # optimizer = optim.SGD(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
+    dist_print("Optimizer: {}".format(optimizer.__class__))
     # Loss && Optimizer ready
 
     # TODO warmup
@@ -287,18 +295,19 @@ def worker(gpu, gpu_num, args):
     # scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=15, gamma=0.2)
     import torchvision.transforms as transforms
     augs = transforms.Compose([
-        transforms.RandomGrayscale(),
-        transforms.ColorJitter(brightness=0.05, contrast=0.05, saturation=0.05),
-        transforms.RandomErasing(p=0.1),])
-    train_dataset = CULane(args.dataset_dir, 'train', args.random_transforms, img_transforms=augs)
+        # transforms.RandomGrayscale(),
+        transforms.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.05),
+        transforms.RandomErasing(p=0.1),
+    ])
+    train_dataset = HMLane(args.dataset_dir, 'train', "edge", args.random_transforms, img_transforms=None)
     train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
     kwargs = {'batch_size': args.batch_size // gpu_num, 'num_workers': args.workers,
               'sampler': train_sampler}
     train_loader = DataLoader(train_dataset, **kwargs, pin_memory=True)
 
-    val_dataset = CULane(args.dataset_dir, 'val', False)
+    val_dataset = HMLane(args.dataset_dir, 'val', "edge", False)
     val_sampler = torch.utils.data.distributed.DistributedSampler(val_dataset, shuffle=False)
-    kwargs = {'batch_size': args.batch_size // gpu_num, 'num_workers': args.workers, 'sampler': val_sampler}
+    kwargs = {'batch_size': args.batch_size // gpu_num // 2, 'num_workers': args.workers, 'sampler': val_sampler}
     val_loader = DataLoader(val_dataset, **kwargs)
 
     # TODO resume && finetune

@@ -189,13 +189,13 @@ class FPNAF(nn.Module):
 
         # TODO xxx
         if stride == 8:
-            self.fpn_neck = FPNFusion(['s32', 's16', 's8'], 128, mode='concat')
+            self.fpn_neck = FPNFusion(['s32', 's16', 's8'], 256, mode='concat')
         elif stride == 16:
-            self.fpn_neck = FPNFusion(['s32', 's16'], 128, mode='concat')
+            self.fpn_neck = FPNFusion(['s32', 's16'], 256, mode='concat')
         elif stride == 4:
-            self.fpn_neck = FPNFusion(['s32', 's16', 's8', 's4'], 128, mode='concat')
+            self.fpn_neck = FPNFusion(['s32', 's16', 's8', 's4'], 256, mode='concat')
 
-        self.head = AFHeadRes(128, heads=heads)
+        self.head = AFHeadRes(256, heads=heads)
         self.fpn = self.__init_fpn__(stride)
         if instance_norm:
             self.inn = nn.InstanceNorm2d(3, affine=True)
@@ -219,21 +219,24 @@ class DLAFPNAF(FPNAF):
 
     def __init_fpn__(self, stride):
         bb = timm.create_model('dla34', pretrained=True)
+        # bb.load_state_dict(torch.load("dla34.bb.pth"))
+        print(bb.base_layer[0].weight.max())
+        # exit()
         if stride == 4:
             fpn = BackboneWithFPN(bb, return_layers={'level2': 's4', 'level3': 's8', 'level4': 's16', 'level5': 's32'},
                                   in_channels_list=[64, 128, 256, 512],
-                                  out_channels=128)
+                                  out_channels=256)
             return fpn
 
         if stride == 8:
             fpn = BackboneWithFPN(bb, return_layers={'level3': 's8', 'level4': 's16', 'level5': 's32'},
                                   in_channels_list=[128, 256, 512],
-                                  out_channels=128)
+                                  out_channels=256)
             return fpn
         elif stride == 16:
             fpn = BackboneWithFPN(bb, return_layers={'level5': 's32', 'level4': 's16'},
                                   in_channels_list=[256, 512],
-                                  out_channels=128)
+                                  out_channels=256)
             return fpn
 
 
@@ -273,13 +276,24 @@ if __name__ == '__main__':
     # m = DLAAF({"hm": 1, "vaf": 2, "haf": 1})
     TIMES =20
     m = tv.models.resnet50()
-    d = torch.rand(1, 3, 224, 224)
+    m = timm.create_model('dla46_c', pretrained=True)
+    # m = timm.create_model('dla46x_c', pretrained=True)
+    # m = timm.create_model('dla34', pretrained=True)
+    d = torch.rand(1, 3, 832, 288)
     import time
     s = time.time()
     for i in range(TIMES):
         r = m(d)
     e = time.time()
     print((e - s)/TIMES)
+
+    m = DLAFPNAF({"hm": 1, "vaf": 2, "haf": 1}, stride=4)
+    # d = torch.rand((1, 3, 832, 288))
+    s = time.time()
+    for i in range(TIMES):
+        r = m(d)
+    e = time.time()
+    print((e - s) / TIMES)
 
     d = torch.rand((1, 3, 832, 288))
     s = time.time()
@@ -296,13 +310,7 @@ if __name__ == '__main__':
     e = time.time()
     print((e - s) / TIMES)
 
-    m = DLAFPNAF({"hm": 1, "vaf": 2, "haf": 1}, stride=4)
-    # d = torch.rand((1, 3, 832, 288))
-    s = time.time()
-    for i in range(TIMES):
-        r = m(d)
-    e = time.time()
-    print((e - s) / TIMES)
+
 
 
     # for k, v in m(d)[0].items():

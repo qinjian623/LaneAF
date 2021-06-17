@@ -13,6 +13,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from datasets.culane import CULane, get_lanes_culane
+from datasets.hmlane import HMLane
 from models.dla.pose_dla_dcn import get_pose_net
 from utils.affinity_fields import decodeAFs
 from utils.metrics import match_multi_class
@@ -48,7 +49,7 @@ if args.output_dir is None:
 if not os.path.exists(args.output_dir):
     os.makedirs(args.output_dir)
 else:
-    assert False, 'Output directory already exists!'
+    pass # assert False, 'Output directory already exists!'
 
 # store config in output directory
 with open(os.path.join(args.output_dir, 'config.json'), 'w') as f:
@@ -61,13 +62,13 @@ if args.cuda:
 
 kwargs = {'batch_size': args.batch_size, 'shuffle': False, 'num_workers': 10}
 print(args.dataset_dir)
-test_loader = DataLoader(CULane(args.dataset_dir, 'test', False), **kwargs)
+test_loader = DataLoader(HMLane(args.dataset_dir, 'val', 'edge',False), **kwargs)
 
 # create file handles
 f_log = open(os.path.join(args.output_dir, "logs.txt"), "w")
 
 # get test set filenames
-with open(os.path.join(args.dataset_dir, "list", "test.txt")) as f:
+with open(os.path.join(args.dataset_dir, "val.list")) as f:
     filenames = f.readlines()
 filenames = [x.strip() for x in filenames] 
 
@@ -110,24 +111,47 @@ def test(net):
         seg_out = match_multi_class(seg_out.astype(np.int64), input_seg[0, 0, :, :].detach().cpu().numpy().astype(np.int64))
 
         # get results in output structure
-        xy_coords = get_lanes_culane(seg_out, args.scale * 2) # TODO xxxx
+        xy_coords = get_lanes_culane(seg_out, args.scale) # TODO xxxx
+        #
+        # xcenter = 1920//2
+        # left_id = -1
+        # left_dis = -1920
+        # right_id = -1
+        # right_dis = 1920
+        # for id, lane in enumerate(xy_coords):
+        #     xmean = mean(lane[::2])
+        #     dis = xmean - xcenter
+        #     if dis < 0:
+        #         if dis > left_dis:
+        #             left_dis = dis
+        #             left_id = id
+        #     elif dis > 0:
+        #         if dis < right_dis:
+        #             right_dis = dis
+        #             right_id = id
+        # xy_coords = [xy_coords[left_id], xy_coords[right_id]]
 
         # write results to file
         if not os.path.exists(os.path.join(args.output_dir, 'outputs', os.path.dirname(filenames[b_idx][1:]))):
             os.makedirs(os.path.join(args.output_dir, 'outputs', os.path.dirname(filenames[b_idx][1:])))
-        with open(os.path.join(args.output_dir, 'outputs', filenames[b_idx][1:-3]+'lines.txt'), 'w') as f:
+
+        # TODO new version dataset
+        with open(os.path.join(args.output_dir, 'outputs', filenames[b_idx][:-3]+'lines.txt'), 'w') as f:
             f.write('\n'.join(' '.join(map(str, _lane)) for _lane in xy_coords))
+
+
         # if b_idx > 500:
         #     break
         # create video visualization
         if args.save_viz:
-            print("Save VIZ")
+            # print("Save VIZ")
             img_out = create_viz(img, seg_out.astype(np.uint8), mask_out, vaf_out, haf_out, scale=args.scale)
-            img_out = cv2.resize(img_out, (1640, 590))
+            img_out = cv2.resize(img_out, (1920, 1080))
             # print(len(xy_coords))
             for points in xy_coords:
                 for x, y in zip(points[::2], points[1::2]):
-                    img_out = cv2.circle(img_out, (int(x), int(y)), radius=4, color=(0, 0, 255), thickness=-1)
+                    img_out = cv2.circle(img_out, (int(x * 1), int(y * 1)), radius=4, color=(0, 0, 255), thickness=-1)
+
             cv2.imwrite("{:04d}.jpg".format(b_idx), img_out)
             # cv2.imshow("O", img_out)
             # cv2.waitKey(1)

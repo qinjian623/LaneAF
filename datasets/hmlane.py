@@ -25,14 +25,6 @@ def shrink(im, size):
             ret[i // stride_h, j // stride_w] = patch.max()
     return ret
 
-def coord_op_to_ip_hm(x, y, scale):
-    # (208*scale, 72*scale) --> (208*scale, 72*scale+14=590) --> (1664, 590) --> (1640, 590)
-    if x is not None:
-        x = int(scale * x)
-        # x = x * 1640. / 1664.
-    if y is not None:
-        y = int(scale * y)
-    return x, y
 
 def coord_op_to_ip(x, y, scale):
     # (208*scale, 72*scale) --> (208*scale, 72*scale+14=590) --> (1664, 590) --> (1640, 590)
@@ -55,11 +47,8 @@ def coord_ip_to_op(x, y, scale):
 
 
 def get_lanes_culane(seg_out, samp_factor):
-    # seg_out: input_size/samp_factor
-
     # fit cubic spline to each lane
-    # h_samples = range(589, 240, -10)
-    h_samples = range(1080, 600, -10)
+    h_samples = range(589, 240, -10)
     cs = []
     lane_ids = np.unique(seg_out[seg_out > 0])
     for idx, t_id in enumerate(lane_ids):
@@ -68,12 +57,10 @@ def get_lanes_culane(seg_out, samp_factor):
             x_op = np.where(seg_out[y_op, :] == t_id)[0]
             if x_op.size > 0:
                 x_op = np.mean(x_op)
-                x_ip, y_ip = coord_op_to_ip_hm(x_op, y_op, samp_factor)
-                x_ip *= 3.75
-                y_ip *= 2.109375 # 3.75 #
+                x_ip, y_ip = coord_op_to_ip(x_op, y_op, samp_factor)
                 xs.append(x_ip)
                 ys.append(y_ip)
-        if len(xs) >= 2:
+        if len(xs) >= 5:
             cs.append(CubicSpline(ys, xs, extrapolate=False))
         else:
             cs.append(None)
@@ -90,29 +77,40 @@ def get_lanes_culane(seg_out, samp_factor):
                 else:
                     lane += [_x, _y]
         else:
-            # pass
-            print("Lane completely missed!")
+            pass
+            # print("Lane completely missed!")
         if len(lane) <= 16:
             continue
         lanes.append(lane)
     return lanes
 
 
-class CULane(Dataset):
-    def __init__(self, path, image_set='train', random_transforms=True, img_transforms=None):
-        super(CULane, self).__init__()
+resize_size = (1024, 1024)  # X, Y or X, Y
+input_size = (512, 512)  # W, H
+stride = 8
+
+class HMLane(Dataset):
+    def __init__(self, path, image_set='train', task="lane", random_transforms=True, img_transforms=None):
+        super(HMLane, self).__init__()
         cv2.setNumThreads(0)
         cv2.ocl.setUseOpenCL(False)
         assert image_set in ('train', 'val', 'test'), "image_set is not valid!"
-        self.input_size = (832, 288)  # W, H # original image res: (590, 1640) -> (590-14, 1640+24)/2
+        assert task in ('lane', 'edge')
+        self.task = task
+        self.task_folders = {
+            "lane": "lane_label",
+            "edge": "edge_label"
+        }
+
+        self.input_size = input_size  # W, H # original image res: (590, 1640) -> (590-14, 1640+24)/2
         # if image_set in ["val", "test"]:
         #     self.input_size = (1664, 576)
-        self.output_stride = 8
+        self.output_stride = stride
         self.output_size = list([i // self.output_stride for i in self.input_size])  # TODO valid dividing
-        if image_set in ["val", "test"]:
-            self.training_scales_range = (.5, .5)
+        if image_set not in ["val", "test"]:
+            self.training_scales_range = (.5, .7)
         else:
-            self.training_scales_range = (0.5, 0.6)
+            self.training_scales_range = (0.5, 0.5)
         # self.samp_factor = 32 / (1 / self.training_scales_range[0])
         self.random_transforms = random_transforms
 
@@ -148,31 +146,26 @@ class CULane(Dataset):
         print("Creating Index DONE")
 
     def create_index(self):
-        # if self.image_set == "test":
-        #     listfile = os.path.join(self.data_dir_path, "list", "test_split", "test0_normal.txt")
-        # else:
-        listfile = os.path.join(self.data_dir_path, "list", "{}.txt".format(self.image_set))
+        listfile = os.path.join(self.data_dir_path, "{}.list".format(self.image_set))
+        task_folder = self.task_folders[self.task]
         if not os.path.exists(listfile):
-            raise FileNotFoundError("List file doesn't exist. Label has to be generated! ...")
+            raise FileNotFoundError("List file  {} doesn't exist. Label has to be generated! ...".format(listfile))
         with open(listfile) as f:
             for lid, line in enumerate(f):
-                # if lid > 2000:
-                #     break
                 l = line.strip()
-                if self.image_set == 'test':
-                    path = os.path.join(self.data_dir_path, l[1:])
-                    self.img_list.append(path)  # l[1:]  get rid of the first '/' so as for os.path.join
-                else:
-                    self.img_list.append(os.path.join(self.data_dir_path,
-                                                      l[0:]))
-                if self.image_set == 'test':
-                    # path = os.path.join(self.data_dir_path, 'laneseg_label_w16_test', l[0:-3] + 'png')
-                    self.seg_list.append(os.path.join(self.data_dir_path, 'laneseg_label_w16_test', l[0:-3] + 'png'))
-                else:
-                    self.seg_list.append(os.path.join(self.data_dir_path, 'laneseg_label_w16', l[0:-3] + 'png'))
+                if self.image_set == "train":
+                    self.img_list.append(os.path.join(self.data_dir_path, l))
+                    self.seg_list.append(os.path.join(self.data_dir_path, l[:-3] + "lines.png"))
+                if self.image_set == "val":
+                    self.img_list.append(os.path.join(self.data_dir_path, l))
+                    self.seg_list.append(os.path.join(self.data_dir_path, l[:-3] + "lines.png"))
 
     def __getitem__(self, idx):
-        img = cv2.imread(self.img_list[idx]).astype(np.float32) / 255.  # (H, W, 3)
+        # print(self.img_list[idx], self.seg_list[idx])
+        img = cv2.imread(self.img_list[idx])
+        if img is None:
+            print(self.img_list[idx])
+        img = img.astype(np.float32) / 255.  # (H, W, 3)
         if self.image_set in ["test"]:
             seg = np.zeros(img.shape[:2])  # Empty Test Label
             # seg = cv2.resize(seg, self.input_size, interpolation=cv2.INTER_NEAREST)
@@ -182,8 +175,8 @@ class CULane(Dataset):
 
         seg = np.tile(seg[..., np.newaxis], (1, 1, 3))  # (H, W, 3)
 
-        img = cv2.resize(img[14:, :, :], (1664, 576), interpolation=cv2.INTER_LINEAR)
-        seg = cv2.resize(seg[14:, :, :], (1664, 576), interpolation=cv2.INTER_NEAREST)
+        img = cv2.resize(img, resize_size, interpolation=cv2.INTER_LINEAR)
+        seg = cv2.resize(seg, resize_size, interpolation=cv2.INTER_NEAREST)
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         img, seg = self.transforms((img, seg))
 
@@ -214,3 +207,9 @@ class CULane(Dataset):
 
     def __len__(self):
         return len(self.img_list)
+
+
+if __name__ == '__main__':
+    d = HMLane("/home/jian/data/lines", image_set="val")
+    for datum in d:
+        pass
