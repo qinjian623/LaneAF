@@ -295,11 +295,11 @@ def worker(gpu, gpu_num, args):
     # scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=15, gamma=0.2)
     import torchvision.transforms as transforms
     augs = transforms.Compose([
-        # transforms.RandomGrayscale(),
+        transforms.RandomGrayscale(),
         transforms.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.05),
         transforms.RandomErasing(p=0.1),
     ])
-    train_dataset = HMLane(args.dataset_dir, 'train', "edge", args.random_transforms, img_transforms=None)
+    train_dataset = HMLane(args.dataset_dir, 'train', "edge", args.random_transforms, img_transforms=augs)
     train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
     kwargs = {'batch_size': args.batch_size // gpu_num, 'num_workers': args.workers,
               'sampler': train_sampler}

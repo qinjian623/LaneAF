@@ -30,13 +30,15 @@ def load_lines(dir, file, filter_func=filter_road_edge):
     for line in open(file):
         fn = line.strip()
         path = os.path.join(dir, fn)
-        can = cv2.imread(os.path.join(dir, fn.replace("json", img_suff)))
+        # can = cv2.imread(os.path.join(dir, fn.replace("json", img_suff)))
         # can = cv2.imread(os.path.join(dir, "2021.05.22", "60a836f882e8f91b2afaaf3e", fn.replace("json", "png")))
         # print(can.shape)
         with open(path) as fp:
             jojo = json.load(fp)
             canvas_size = (jojo["height"], jojo["width"])
             can = np.zeros(canvas_size, np.uint8)
+            host_seg = np.zeros(canvas_size, np.uint8)
+
             re = filter(filter_func, jojo['lines'])
             re = list(re)
             # print(re)
@@ -62,6 +64,7 @@ def load_from_list(dir, list_file, filter_func=filter_lanes):
     if filter_func == filter_lanes:
         txt_suff = "lines.txt"
         lb_suff = "lines.png"
+        host_suff = "host.png"
     elif filter_func == filter_road_edge:
         txt_suff = "edge.lines.txt"
         lb_suff = "edge.lines.png"
@@ -74,22 +77,25 @@ def load_from_list(dir, list_file, filter_func=filter_lanes):
     for png_idx, png_file in enumerate(open(list_file)):
         png_file = png_file.strip()
         lb_file = None
+        png_file = png_file[:-3]
         for suff in lane_json_priority:
-            lb_file_prob = os.path.join(dir, png_file.replace(img_suff, suff))
+            lb_file_prob = os.path.join(dir, png_file+suff)
             if os.path.exists(lb_file_prob):
                 lb_file = lb_file_prob
                 break
         if lb_file is None:
             print("Json lb not found: ", lb_file)
             continue
+        # print(lb_file)
         with open(lb_file) as fp:
             jojo = json.load(fp)
             canvas_size = (jojo["height"], jojo["width"])
             can = np.zeros(canvas_size, np.uint8)
+            host_seg = np.zeros(canvas_size, np.uint8)
             re = filter(filter_func, jojo['lines'])
             re = list(re)
             # print(re)
-            txt_file = os.path.join(dir, png_file.replace(img_suff, txt_suff))
+            txt_file = os.path.join(dir, png_file + txt_suff)
             with open(txt_file, 'w') as f:
                 for idx, edge in enumerate(re):
                     # print(edge['points'])
@@ -98,11 +104,16 @@ def load_from_list(dir, list_file, filter_func=filter_lanes):
                     f.write(' '.join(' '.join(map(str, xy)) for xy in points))
                     f.write('\n')
                     cv2.polylines(can, [points], False, (idx + 1), thickness=35)
-            p = os.path.join(dir, png_file.replace(img_suff, lb_suff))
+                    if edge['index'] in [-1, 0, 1]:
+                        cv2.polylines(host_seg, [points], False, edge['index'] + 2, thickness=35)
+            p = os.path.join(dir, png_file + lb_suff)
+            host_p = os.path.join(dir, png_file + host_suff)
+
             # print(p)
             cv2.imwrite(p, can)
+            cv2.imwrite(host_p, host_seg)
             if png_idx % 100 == 0:
-                print(png_file, "\t json = ", lb_file, "Output:", txt_file, "and", p)
+                print(png_file, "\t json = ", lb_file, "Output:", "\n\t", txt_file, "\n\t", p, "\n\t", host_p)
 
 
 if __name__ == '__main__':

@@ -87,7 +87,8 @@ def get_lanes_culane(seg_out, samp_factor):
 
 resize_size = (1024, 1024)  # X, Y or X, Y
 input_size = (512, 512)  # W, H
-stride = 8
+stride = 4
+
 
 class HMLane(Dataset):
     def __init__(self, path, image_set='train', task="lane", random_transforms=True, img_transforms=None):

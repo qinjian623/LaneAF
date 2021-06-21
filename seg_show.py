@@ -136,11 +136,11 @@ for jsf in fl:
     m = np.zeros((540, 1920, 3), np.uint8)
     m[:, :960] = png
     m[:, 960:] = canvas
-    # cv2.imshow("FF", m)
-    # cv2.imshow("GT", gt_lb)
-    # cv2.waitKey(1)
+    cv2.imshow("FF", m)
+    cv2.imshow("GT", gt_lb)
+    cv2.waitKey(0)
     # cv2.imwrite(jsf.replace(".json", "_output.png"), m)
-    cv2.imwrite(jsf.replace(".json", "_label.png"), gt_lb)
+    # cv2.imwrite(jsf.replace(".json", "_label.png"), gt_lb)
 ps = sum(stats.values())
 print(ps)
 for c, n in stats.items():
