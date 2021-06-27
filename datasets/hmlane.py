@@ -87,7 +87,7 @@ def get_lanes_culane(seg_out, samp_factor):
 
 resize_size = (1024, 1024)  # X, Y or X, Y
 input_size = (512, 512)  # W, H
-stride = 4
+stride = 8
 
 
 class HMLane(Dataset):
@@ -98,10 +98,10 @@ class HMLane(Dataset):
         assert image_set in ('train', 'val', 'test'), "image_set is not valid!"
         assert task in ('lane', 'edge')
         self.task = task
-        self.task_folders = {
-            "lane": "lane_label",
-            "edge": "edge_label"
-        }
+        # self.task_folders = {
+        #     "lane": "lane_label",
+        #     "edge": "edge_label"
+        # }
 
         self.input_size = input_size  # W, H # original image res: (590, 1640) -> (590-14, 1640+24)/2
         # if image_set in ["val", "test"]:
@@ -130,7 +130,7 @@ class HMLane(Dataset):
                                     interpolation=(cv2.INTER_LINEAR, cv2.INTER_NEAREST)),
                 tf.GroupRandomCropRatio(size=self.input_size),
                 tf.GroupRandomHorizontalFlip(),
-                tf.GroupRandomRotation(degree=(-5, 5), interpolation=(cv2.INTER_LINEAR, cv2.INTER_NEAREST),
+                tf.GroupRandomRotation(degree=(-10, 10), interpolation=(cv2.INTER_LINEAR, cv2.INTER_NEAREST),
                                        padding=(self.mean, (self.ignore_label,))),
                 tf.GroupNormalize(mean=(self.mean, (0,)), std=(self.std, (1,))),
             ])
@@ -143,12 +143,12 @@ class HMLane(Dataset):
         # print("Creating Index...")
         self.img_list = []
         self.seg_list = []
+        self.host_list = []
         self.create_index()
         print("Creating Index DONE")
 
     def create_index(self):
         listfile = os.path.join(self.data_dir_path, "{}.list".format(self.image_set))
-        task_folder = self.task_folders[self.task]
         if not os.path.exists(listfile):
             raise FileNotFoundError("List file  {} doesn't exist. Label has to be generated! ...".format(listfile))
         with open(listfile) as f:
@@ -157,9 +157,13 @@ class HMLane(Dataset):
                 if self.image_set == "train":
                     self.img_list.append(os.path.join(self.data_dir_path, l))
                     self.seg_list.append(os.path.join(self.data_dir_path, l[:-3] + "lines.png"))
+                    # print(self.img_list[-1], self.seg_list[-1])
+                    # self.host_list.append(os.path.join(self.data_dir_path, l[:-3] + "host.png"))
                 if self.image_set == "val":
                     self.img_list.append(os.path.join(self.data_dir_path, l))
                     self.seg_list.append(os.path.join(self.data_dir_path, l[:-3] + "lines.png"))
+                    # print(self.img_list[-1], self.seg_list[-1])
+                    # self.host_list.append(os.path.join(self.data_dir_path, l[:-3] + "host.png"))
 
     def __getitem__(self, idx):
         # print(self.img_list[idx], self.seg_list[idx])
@@ -169,10 +173,15 @@ class HMLane(Dataset):
         img = img.astype(np.float32) / 255.  # (H, W, 3)
         if self.image_set in ["test"]:
             seg = np.zeros(img.shape[:2])  # Empty Test Label
+            # host = np.zeros(img.shape[:2])  # Empty Test Label
             # seg = cv2.resize(seg, self.input_size, interpolation=cv2.INTER_NEAREST)
             # img = cv2.resize(img, self.input_size, interpolation=cv2.INTER_LINEAR)
         else:
             seg = cv2.imread(self.seg_list[idx], cv2.IMREAD_UNCHANGED)  # (H, W)
+            if seg is None:
+                print(self.seg_list[idx])
+
+            # host = cv2.imread(self.host_list[idx], cv2.IMREAD_UNCHANGED)  # (H, W)
 
         seg = np.tile(seg[..., np.newaxis], (1, 1, 3))  # (H, W, 3)
 
@@ -188,6 +197,10 @@ class HMLane(Dataset):
         mask[seg[:, :, 0] >= 1] = 1  # binary-mask
         mask[seg[:, :, 0] == self.ignore_label] = self.ignore_label  # ignored px
 
+        host_mask = seg[:, :, 0].copy()
+        host_mask[seg[:, :, 0] < 100] = 0  # binary-mask
+        host_mask[seg[:, :, 0] >= 100] = 1  # binary-mask
+        host_mask[seg[:, :, 0] == self.ignore_label] = self.ignore_label  # ignored px
         # create AFs
         seg_wo_ignore = seg[:, :, 0].copy()
         seg_wo_ignore[seg_wo_ignore == self.ignore_label] = 0
@@ -199,12 +212,13 @@ class HMLane(Dataset):
         if self.img_ts is not None:
             img = self.img_ts(img)
         mask = torch.from_numpy(mask).contiguous().float().unsqueeze(0)
+        host_mask = torch.from_numpy(host_mask).contiguous().float().unsqueeze(0)
         seg = torch.from_numpy(seg[:, :, 0]).contiguous().long().unsqueeze(0)
         af = torch.from_numpy(af).permute(2, 0, 1).contiguous().float()
 
         # print(img.shape, mask.shape, seg.shape, af.shape)
         # exit()
-        return img, seg, mask, af
+        return img, seg, mask, af, host_mask
 
     def __len__(self):
         return len(self.img_list)

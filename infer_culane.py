@@ -4,6 +4,8 @@ import time
 from datetime import datetime
 from statistics import mean
 import argparse
+
+from torchvision.utils import save_image
 from tqdm import tqdm
 import numpy as np
 import cv2
@@ -62,7 +64,7 @@ if args.cuda:
 
 kwargs = {'batch_size': args.batch_size, 'shuffle': False, 'num_workers': 10}
 print(args.dataset_dir)
-test_loader = DataLoader(HMLane(args.dataset_dir, 'val', 'edge',False), **kwargs)
+test_loader = DataLoader(HMLane(args.dataset_dir, 'val', 'edge', False), **kwargs)
 
 # create file handles
 f_log = open(os.path.join(args.output_dir, "logs.txt"), "w")
@@ -79,7 +81,7 @@ def test(net):
     out_vid = None
 
     for b_idx, sample in enumerate(tqdm(test_loader)):
-        input_img, input_seg, input_mask, input_af = sample
+        input_img, input_seg, input_mask, input_af, _ = sample
         if args.cuda:
             input_img = input_img.cuda(non_blocking=True)
             input_seg = input_seg.cuda(non_blocking=True)
@@ -153,6 +155,7 @@ def test(net):
                     img_out = cv2.circle(img_out, (int(x * 1), int(y * 1)), radius=4, color=(0, 0, 255), thickness=-1)
 
             cv2.imwrite("{:04d}.jpg".format(b_idx), img_out)
+            # save_image(outputs['host'], "{:04d}.host.jpg".format(b_idx))
             # cv2.imshow("O", img_out)
             # cv2.waitKey(1)
             if out_vid is None:
@@ -174,7 +177,7 @@ if __name__ == "__main__":
     from models.raw_resnet import ResFPNAF, DLAFPNAF
     # model = EAFNet({"hm": 1, "haf": 1, "vaf": 2})
     # model = ResFPNAF({"hm": 1, "haf": 1, "vaf": 2})
-    model = DLAFPNAF({"hm": 1, "haf": 1, "vaf": 2}, stride=4)
+    model = ResFPNAF({"hm": 1, "haf": 1, "vaf": 2}, stride=8)
     # print(model)
     # model = D4UNet()
     sd = torch.load(args.snapshot)

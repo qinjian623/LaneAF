@@ -86,12 +86,14 @@ def save_best(net, optimizer, save_path):
 # validation function
 def val(net, val_loader, f_log, gpu):
     epoch_acc, epoch_f1 = list(), list()
+    epoch_host_acc, epoch_host_f1 = list(), list()
     net.eval()
     with tqdm(total=len(val_loader)) as t:
         for b_idx, sample in enumerate(val_loader):
-            input_img, input_seg, input_mask, input_af = sample
+            input_img, input_seg, input_mask, input_af, host_mask = sample
             input_img = input_img.cuda(gpu, non_blocking=True)
             input_mask = input_mask.cuda(gpu, non_blocking=True)
+            host_mask = host_mask.cuda(gpu, non_blocking=True)
 
             # do the forward pass
             outputs = net(input_img)[-1]
@@ -107,6 +109,18 @@ def val(net, val_loader, f_log, gpu):
             val_f1 = f1_score((target > 0.5).astype(np.int64), (pred > 0.5).astype(np.int64), zero_division=1)
             epoch_acc.append(val_acc)
             epoch_f1.append(val_f1)
+
+
+            # pred = torch.sigmoid(outputs['host']).detach().cpu().numpy().ravel()
+            # target = host_mask.detach().cpu().numpy().ravel()
+            # pred[target == val_loader.dataset.ignore_label] = 0
+            # target[target == val_loader.dataset.ignore_label] = 0
+            # host_val_acc = accuracy_score((pred > 0.5).astype(np.int64), (target > 0.5).astype(np.int64))
+            # host_val_f1 = f1_score((target > 0.5).astype(np.int64), (pred > 0.5).astype(np.int64), zero_division=1)
+            # epoch_host_acc.append(host_val_acc)
+            # epoch_host_f1.append(host_val_f1)
+
+            # t.set_postfix(F1="{:.6f}".format(val_f1), H1="{:.6f}".format(host_val_f1))
             t.set_postfix(F1="{:.6f}".format(val_f1))
             t.update()
 
@@ -114,12 +128,24 @@ def val(net, val_loader, f_log, gpu):
 
     avg_acc = torch.tensor(mean(epoch_acc)).cuda(gpu)
     avg_f1 = torch.tensor(mean(epoch_f1)).cuda(gpu)
+
+    if len(epoch_host_acc) > 0:
+        host_avg_acc = torch.tensor(mean(epoch_host_acc)).cuda(gpu)
+        host_avg_f1 = torch.tensor(mean(epoch_host_f1)).cuda(gpu)
+    else:
+        host_avg_acc = torch.tensor(0.0).cuda(gpu)
+        host_avg_f1 = torch.tensor(0.0).cuda(gpu)
+
     # Sync whole dataset, no need this in training.
     dist.all_reduce(avg_f1)
     dist.all_reduce(avg_acc)
+    dist.all_reduce(host_avg_f1)
+    dist.all_reduce(host_avg_acc)
 
     avg_f1 /= dist.get_world_size()
     avg_acc /= dist.get_world_size()
+    host_avg_f1 /= dist.get_world_size()
+    host_avg_acc /= dist.get_world_size()
 
     if dist.get_rank() == 0:
         print("\n------------------------ Validation metrics ------------------------")
@@ -131,6 +157,13 @@ def val(net, val_loader, f_log, gpu):
         print("--------------------------------------------------------------------\n")
         f_log.write("--------------------------------------------------------------------\n\n")
 
+        print("Average host accuracy for epoch = {:.4f}".format(host_avg_acc))
+        f_log.write("Average host accuracy for epoch = {:.4f}\n".format(host_avg_acc))
+        print("Average host F1 score for epoch = {:.4f}".format(host_avg_f1))
+        f_log.write("Average host F1 score for epoch = {:.4f}\n".format(host_avg_f1))
+        print("--------------------------------------------------------------------\n")
+        f_log.write("--------------------------------------------------------------------\n\n")
+
     return avg_acc.cpu().item(), avg_f1.cpu().item()
 
 
@@ -138,15 +171,17 @@ def val(net, val_loader, f_log, gpu):
 # training function
 def train(net, train_loader, criterions, optimizer, scheduler, f_log, epoch, gpu):
     epoch_loss_seg, epoch_loss_vaf, epoch_loss_haf, epoch_loss, epoch_acc, epoch_f1 = list(), list(), list(), list(), list(), list()
+    epoch_loss_host, epoch_host_acc, epoch_host_f1 = list(), list(), list()
     net.train()
     criterion_1, criterion_2, criterion_reg = criterions
     metric_sampler_inter = 20
     with tqdm(total=len(train_loader)) as t:
         for b_idx, sample in enumerate(train_loader):
-            input_img, _, input_mask, input_af = sample
+            input_img, _, input_mask, input_af, host_mask = sample
             input_img = input_img.cuda(gpu, non_blocking=True)
             input_mask = input_mask.cuda(gpu, non_blocking=True)
             input_af = input_af.cuda(gpu, non_blocking=True)
+            host_mask = host_mask.cuda(gpu, non_blocking=True)
             # zero gradients before forward pass
 
             optimizer.zero_grad()
@@ -158,13 +193,16 @@ def train(net, train_loader, criterions, optimizer, scheduler, f_log, epoch, gpu
             _mask = (input_mask != train_loader.dataset.ignore_label).float()
             loss_seg = criterion_1(outputs['hm'] * _mask, input_mask * _mask) + criterion_2(torch.sigmoid(outputs['hm']),
                                                                                             input_mask)
+            # loss_host = criterion_1(outputs['host'] * _mask, host_mask * _mask) + criterion_2(torch.sigmoid(outputs['host']),
+            #                                                                                 host_mask)
             loss_vaf = 0.5 * criterion_reg(outputs['vaf'], input_af[:, :2, :, :], input_mask)
             loss_haf = 0.5 * criterion_reg(outputs['haf'], input_af[:, 2:3, :, :], input_mask)
 
             epoch_loss_seg.append(loss_seg.item())
             epoch_loss_vaf.append(loss_vaf.item())
             epoch_loss_haf.append(loss_haf.item())
-            loss = loss_seg + loss_vaf + loss_haf
+            # epoch_loss_host.append(loss_host.item())
+            loss = loss_seg + loss_vaf + loss_haf # + loss_host
             epoch_loss.append(loss.item())
 
             # Make training faster
@@ -177,8 +215,18 @@ def train(net, train_loader, criterions, optimizer, scheduler, f_log, epoch, gpu
                 train_f1 = f1_score((target > 0.5).astype(np.int64), (pred > 0.5).astype(np.int64), zero_division=1)
                 epoch_acc.append(train_acc)
                 epoch_f1.append(train_f1)
-                t.set_postfix(F1="{:.6f}".format(train_f1))
 
+                # pred = torch.sigmoid(outputs['host']).detach().cpu().numpy().ravel()
+                # target = host_mask.detach().cpu().numpy().ravel()
+                # pred[target == train_loader.dataset.ignore_label] = 0
+                # target[target == train_loader.dataset.ignore_label] = 0
+                # host_val_acc = accuracy_score((pred > 0.5).astype(np.int64), (target > 0.5).astype(np.int64))
+                # host_val_f1 = f1_score((target > 0.5).astype(np.int64), (pred > 0.5).astype(np.int64), zero_division=1)
+                # epoch_host_acc.append(host_val_acc)
+                # epoch_host_f1.append(host_val_f1)
+
+                # t.set_postfix(F1="{:.6f}".format(train_f1), H1="{:.6f}".format(host_val_f1))
+                t.set_postfix(F1="{:.6f}".format(train_f1))
             loss.backward()
             optimizer.step()
 
@@ -251,7 +299,9 @@ def worker(gpu, gpu_num, args):
     torch.set_num_threads(1)
     # model = ResNetAF({"hm": 1, "haf": 1, "vaf": 2}, pretrained=True)
     # model = ResFPNAF({"hm": 1, "haf": 1, "vaf": 2})
-    model = DLAFPNAF({"hm": 1, "haf": 1, "vaf": 2}, stride=4)
+    # model = DLAFPNAF({"hm": 1, "haf": 1, "vaf": 2}, stride=8)
+    model = ResFPNAF({"hm": 1, "haf": 1, "vaf": 2}, stride=8)
+
     torch.cuda.set_device(args.gpu)
 
     if args.snapshot is not None:
@@ -285,7 +335,7 @@ def worker(gpu, gpu_num, args):
     criterion_1.cuda(args.gpu)
     criterion_2 = IoULoss().cuda(args.gpu)
     criterion_reg = RegL1Loss().cuda(args.gpu)
-    optimizer = optim.Adam(model.parameters(), lr=2e-3, weight_decay=args.weight_decay)
+    optimizer = optim.Adam(model.parameters(), lr=1e-3, weight_decay=args.weight_decay)
     # optimizer = optim.SGD(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
     dist_print("Optimizer: {}".format(optimizer.__class__))
     # Loss && Optimizer ready
@@ -299,7 +349,7 @@ def worker(gpu, gpu_num, args):
         transforms.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.05),
         transforms.RandomErasing(p=0.1),
     ])
-    train_dataset = HMLane(args.dataset_dir, 'train', "edge", args.random_transforms, img_transforms=augs)
+    train_dataset = HMLane(args.dataset_dir, 'train', "edge", args.random_transforms, img_transforms=None)
     train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
     kwargs = {'batch_size': args.batch_size // gpu_num, 'num_workers': args.workers,
               'sampler': train_sampler}

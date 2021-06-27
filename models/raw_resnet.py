@@ -241,15 +241,16 @@ class DLAFPNAF(FPNAF):
 
 
 class ResFPNAF(FPNAF):
-    def __init__(self, heads):
-        super(ResFPNAF, self).__init__(heads)
+    def __init__(self, heads, stride=8):
+        super(ResFPNAF, self).__init__(heads, stride=stride)
 
     def __init_fpn__(self, stride):
-        bb = tv.models.resnet34(True)
+        bb = tv.models.resnet152(True)
         if stride == 8:
             fpn = BackboneWithFPN(bb, return_layers={'layer2': 's8', 'layer3': 's16', 'layer4': 's32'},
-                                  in_channels_list=[128, 256, 512],
-                                  out_channels=128)
+                                  # in_channels_list=[128, 256, 512],
+                                  in_channels_list=[512, 1024, 2048],
+                                  out_channels=256)
             return fpn
         elif stride == 16:
             fpn = BackboneWithFPN(bb, return_layers={'layer4': 's32', 'layer3': 's16'}, in_channels_list=[256, 512],
@@ -274,7 +275,7 @@ class DLAAF(ResNetAF):
 
 if __name__ == '__main__':
     # m = DLAAF({"hm": 1, "vaf": 2, "haf": 1})
-    TIMES =20
+    TIMES = 20
     m = tv.models.resnet50()
     m = timm.create_model('dla46_c', pretrained=True)
     # m = timm.create_model('dla46x_c', pretrained=True)

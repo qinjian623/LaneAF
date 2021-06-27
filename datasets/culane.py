@@ -90,8 +90,8 @@ def get_lanes_culane(seg_out, samp_factor):
                 else:
                     lane += [_x, _y]
         else:
-            # pass
-            print("Lane completely missed!")
+            pass
+            # print("Lane completely missed!")
         if len(lane) <= 16:
             continue
         lanes.append(lane)

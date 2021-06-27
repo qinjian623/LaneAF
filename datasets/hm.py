@@ -11,7 +11,8 @@ lane_json_priority = [
     "json"
 ]
 
-img_suff = "jpg"
+def filter_nothing(x):
+    return True
 
 
 def filter_lanes(x):
@@ -26,7 +27,7 @@ def filter_host_lanes(x):
     return x['type'] != "Road_Edge" and (x['index'] == 0 or x['index'] == 1 or x['index'] == -1)
 
 
-def load_lines(dir, file, filter_func=filter_road_edge):
+def load_lines(dir, file, filter_func=filter_nothing):
     for line in open(file):
         fn = line.strip()
         path = os.path.join(dir, fn)
@@ -35,7 +36,10 @@ def load_lines(dir, file, filter_func=filter_road_edge):
         # print(can.shape)
         with open(path) as fp:
             jojo = json.load(fp)
-            canvas_size = (jojo["height"], jojo["width"])
+            if "height" in jojo and "width" in jojo:
+                canvas_size = (jojo["height"], jojo["width"])
+            else:
+                canvas_size = (1080, 1920)
             can = np.zeros(canvas_size, np.uint8)
             host_seg = np.zeros(canvas_size, np.uint8)
 
@@ -88,13 +92,17 @@ def load_from_list(dir, list_file, filter_func=filter_lanes):
             continue
         # print(lb_file)
         with open(lb_file) as fp:
+            print(lb_file)
             jojo = json.load(fp)
-            canvas_size = (jojo["height"], jojo["width"])
+            if "height" in jojo and "width" in jojo:
+                canvas_size = (jojo["height"], jojo["width"])
+            else:
+                canvas_size = (1080, 1920)
             can = np.zeros(canvas_size, np.uint8)
-            host_seg = np.zeros(canvas_size, np.uint8)
+            # host_seg = np.zeros(canvas_size, np.uint8)
             re = filter(filter_func, jojo['lines'])
             re = list(re)
-            # print(re)
+            # print(len(re))
             txt_file = os.path.join(dir, png_file + txt_suff)
             with open(txt_file, 'w') as f:
                 for idx, edge in enumerate(re):
@@ -103,17 +111,20 @@ def load_from_list(dir, list_file, filter_func=filter_lanes):
                     # print(points.shape)
                     f.write(' '.join(' '.join(map(str, xy)) for xy in points))
                     f.write('\n')
-                    cv2.polylines(can, [points], False, (idx + 1), thickness=35)
+                    # TODO maybe a bug in lanelines_6.json
                     if edge['index'] in [-1, 0, 1]:
-                        cv2.polylines(host_seg, [points], False, edge['index'] + 2, thickness=35)
+                        cv2.polylines(can, [points], False, edge['index'] + 102, thickness=35)
+                    else:
+                        cv2.polylines(can, [points], False, (idx + 1), thickness=35)
             p = os.path.join(dir, png_file + lb_suff)
-            host_p = os.path.join(dir, png_file + host_suff)
+            # host_p = os.path.join(dir, png_file + host_suff)
 
             # print(p)
             cv2.imwrite(p, can)
-            cv2.imwrite(host_p, host_seg)
-            if png_idx % 100 == 0:
-                print(png_file, "\t json = ", lb_file, "Output:", "\n\t", txt_file, "\n\t", p, "\n\t", host_p)
+            # cv2.imwrite(host_p, host_seg)
+            if png_idx % 1000 == 0:
+                print(can.max())
+                print(png_file, "\t json = ", lb_file, "Output:", "\n\t", txt_file, "\n\t", p)
 
 
 if __name__ == '__main__':
