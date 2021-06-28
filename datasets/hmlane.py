@@ -9,7 +9,7 @@ from torch.utils.data import Dataset
 
 import datasets.transforms as tf
 from utils.affinity_fields import generateAFs
-
+import global_config
 
 def shrink(im, size):
     s_w, s_h = size
@@ -85,30 +85,18 @@ def get_lanes_culane(seg_out, samp_factor):
     return lanes
 
 
-resize_size = (1024, 1024)  # X, Y or X, Y
-input_size = (512, 512)  # W, H
-stride = 8
-
 
 class HMLane(Dataset):
-    def __init__(self, path, image_set='train', task="lane", random_transforms=True, img_transforms=None):
+    def __init__(self, path, image_set='train', random_transforms=True, img_transforms=None):
         super(HMLane, self).__init__()
         cv2.setNumThreads(0)
         cv2.ocl.setUseOpenCL(False)
         assert image_set in ('train', 'val', 'test'), "image_set is not valid!"
-        assert task in ('lane', 'edge')
-        self.task = task
-        # self.task_folders = {
-        #     "lane": "lane_label",
-        #     "edge": "edge_label"
-        # }
 
-        self.input_size = input_size  # W, H # original image res: (590, 1640) -> (590-14, 1640+24)/2
-        # if image_set in ["val", "test"]:
-        #     self.input_size = (1664, 576)
-        self.output_stride = stride
-        self.output_size = list([i // self.output_stride for i in self.input_size])  # TODO valid dividing
-        if image_set not in ["val", "test"]:
+        # self.input_size = global_config.input_size  # W, H # original image res: (590, 1640) -> (590-14, 1640+24)/2
+        # self.output_stride = global_config.stride
+        self.output_size = list([i // global_config.stride for i in global_config.input_size])  # TODO valid dividing
+        if image_set in ["train"]:
             self.training_scales_range = (.5, .7)
         else:
             self.training_scales_range = (0.5, 0.5)
@@ -118,8 +106,7 @@ class HMLane(Dataset):
         self.data_dir_path = path
         self.image_set = image_set
         # normalization transform for input images
-        self.mean = [0.485, 0.456, 0.406]  # [103.939, 116.779, 123.68]
-        self.std = [0.229, 0.224, 0.225]  # [1, 1, 1]
+
         self.ignore_label = 255
 
         self.img_ts = img_transforms
@@ -128,17 +115,17 @@ class HMLane(Dataset):
             self.transforms = transforms.Compose([
                 tf.GroupRandomScale(size=self.training_scales_range,
                                     interpolation=(cv2.INTER_LINEAR, cv2.INTER_NEAREST)),
-                tf.GroupRandomCropRatio(size=self.input_size),
+                tf.GroupRandomCropRatio(size=global_config.input_size),
                 tf.GroupRandomHorizontalFlip(),
                 tf.GroupRandomRotation(degree=(-10, 10), interpolation=(cv2.INTER_LINEAR, cv2.INTER_NEAREST),
-                                       padding=(self.mean, (self.ignore_label,))),
-                tf.GroupNormalize(mean=(self.mean, (0,)), std=(self.std, (1,))),
+                                       padding=(global_config.mean, (self.ignore_label,))),
+                tf.GroupNormalize(mean=(global_config.mean, (0,)), std=(global_config.std, (1,))),
             ])
         else:
             self.transforms = transforms.Compose([
                 tf.GroupRandomScale(size=(self.training_scales_range[0], self.training_scales_range[0]),
                                     interpolation=(cv2.INTER_LINEAR, cv2.INTER_NEAREST)),
-                tf.GroupNormalize(mean=(self.mean, (0,)), std=(self.std, (1,))),
+                tf.GroupNormalize(mean=(global_config.mean, (0,)), std=(global_config.std, (1,))),
             ])
         # print("Creating Index...")
         self.img_list = []
@@ -169,7 +156,7 @@ class HMLane(Dataset):
         # print(self.img_list[idx], self.seg_list[idx])
         img = cv2.imread(self.img_list[idx])
         if img is None:
-            print(self.img_list[idx])
+            raise FileNotFoundError(self.img_list[idx])
         img = img.astype(np.float32) / 255.  # (H, W, 3)
         if self.image_set in ["test"]:
             seg = np.zeros(img.shape[:2])  # Empty Test Label
@@ -179,19 +166,19 @@ class HMLane(Dataset):
         else:
             seg = cv2.imread(self.seg_list[idx], cv2.IMREAD_UNCHANGED)  # (H, W)
             if seg is None:
-                print(self.seg_list[idx])
-
+                raise FileNotFoundError(self.seg_list[idx])
             # host = cv2.imread(self.host_list[idx], cv2.IMREAD_UNCHANGED)  # (H, W)
 
         seg = np.tile(seg[..., np.newaxis], (1, 1, 3))  # (H, W, 3)
 
-        img = cv2.resize(img, resize_size, interpolation=cv2.INTER_LINEAR)
-        seg = cv2.resize(seg, resize_size, interpolation=cv2.INTER_NEAREST)
+        img = cv2.resize(img, global_config.resize_size, interpolation=cv2.INTER_LINEAR)
+        seg = cv2.resize(seg, global_config.resize_size, interpolation=cv2.INTER_NEAREST)
+
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         img, seg = self.transforms((img, seg))
 
         # seg = shrink(seg, (math.ceil(img.shape[1] / self.output_stride), math.ceil(img.shape[0] / self.output_stride)))
-        seg = cv2.resize(seg, None, fx=1 / self.output_stride, fy=1 / self.output_stride,
+        seg = cv2.resize(seg, None, fx=1 / global_config.stride, fy=1 / global_config.stride,
                          interpolation=cv2.INTER_NEAREST)
         mask = seg[:, :, 0].copy()
         mask[seg[:, :, 0] >= 1] = 1  # binary-mask
@@ -201,6 +188,7 @@ class HMLane(Dataset):
         host_mask[seg[:, :, 0] < 100] = 0  # binary-mask
         host_mask[seg[:, :, 0] >= 100] = 1  # binary-mask
         host_mask[seg[:, :, 0] == self.ignore_label] = self.ignore_label  # ignored px
+
         # create AFs
         seg_wo_ignore = seg[:, :, 0].copy()
         seg_wo_ignore[seg_wo_ignore == self.ignore_label] = 0
@@ -215,9 +203,6 @@ class HMLane(Dataset):
         host_mask = torch.from_numpy(host_mask).contiguous().float().unsqueeze(0)
         seg = torch.from_numpy(seg[:, :, 0]).contiguous().long().unsqueeze(0)
         af = torch.from_numpy(af).permute(2, 0, 1).contiguous().float()
-
-        # print(img.shape, mask.shape, seg.shape, af.shape)
-        # exit()
         return img, seg, mask, af, host_mask
 
     def __len__(self):

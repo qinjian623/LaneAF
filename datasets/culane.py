@@ -9,7 +9,7 @@ from torch.utils.data import Dataset
 
 import datasets.transforms as tf
 from utils.affinity_fields import generateAFs
-
+import global_config
 
 def shrink(im, size):
     s_w, s_h = size
@@ -25,14 +25,10 @@ def shrink(im, size):
             ret[i // stride_h, j // stride_w] = patch.max()
     return ret
 
+
 def coord_op_to_ip_hm(x, y, scale):
-    # (208*scale, 72*scale) --> (208*scale, 72*scale+14=590) --> (1664, 590) --> (1640, 590)
-    if x is not None:
-        x = int(scale * x)
-        # x = x * 1640. / 1664.
-    if y is not None:
-        y = int(scale * y)
-    return x, y
+    return int(scale * x), int(scale * y)
+
 
 def coord_op_to_ip(x, y, scale):
     # (208*scale, 72*scale) --> (208*scale, 72*scale+14=590) --> (1664, 590) --> (1640, 590)
@@ -59,7 +55,7 @@ def get_lanes_culane(seg_out, samp_factor):
 
     # fit cubic spline to each lane
     # h_samples = range(589, 240, -10)
-    h_samples = range(1080, 600, -10)
+    h_samples = range(global_config.image_size[1], int(0.55 * global_config.image_size[1]), -10)
     cs = []
     lane_ids = np.unique(seg_out[seg_out > 0])
     for idx, t_id in enumerate(lane_ids):
@@ -69,11 +65,11 @@ def get_lanes_culane(seg_out, samp_factor):
             if x_op.size > 0:
                 x_op = np.mean(x_op)
                 x_ip, y_ip = coord_op_to_ip_hm(x_op, y_op, samp_factor)
-                x_ip *= 3.75
-                y_ip *= 2.109375 # 3.75 #
+                x_ip *= global_config.image_size[0] / global_config.input_size[0]
+                y_ip *= global_config.image_size[1] / global_config.input_size[1] # 2.109375 # 3.75 #
                 xs.append(x_ip)
                 ys.append(y_ip)
-        if len(xs) >= 2:
+        if len(xs) >= 5:
             cs.append(CubicSpline(ys, xs, extrapolate=False))
         else:
             cs.append(None)
@@ -92,7 +88,7 @@ def get_lanes_culane(seg_out, samp_factor):
         else:
             pass
             # print("Lane completely missed!")
-        if len(lane) <= 16:
+        if len(lane) <= 10:
             continue
         lanes.append(lane)
     return lanes

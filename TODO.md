@@ -10,8 +10,13 @@ TODOs
 + [x] ERFNet
 + [x] Test
 + [x] Lower Resolution
-+ [ ] Eval
-+ [ ] FPN
-+ [ ] Merge into MMSeg
++ [x] Eval
++ [x] FPN
++ [x] Merge into MMSeg
++ [ ] Overfitting?
++ [ ] reorg ...
++ [ ] all configs ...
++ [ ] validate warmup
++ [ ] post-process
 
 

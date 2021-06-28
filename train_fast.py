@@ -3,26 +3,24 @@ import json
 import os
 from datetime import datetime
 from statistics import mean
-import torch.nn as nn
+
 import matplotlib
 import numpy as np
 import torch.distributed as dist
 import torch.multiprocessing as mp
+import torch.nn as nn
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from tqdm import tqdm
 
+import global_config
 from datasets.hmlane import HMLane
 from models.erf.encoder import ERFNet as Encoder
-from models.raw_resnet import DLAFPNAF, ResNetAF, ResFPNAF
 
 matplotlib.use('Agg')
 from sklearn.metrics import accuracy_score, f1_score
 
 import torch
-import torch.optim as optim
 from torch.utils.data import DataLoader
-
-from datasets.culane import CULane
 
 from models.loss import FocalLoss, IoULoss, RegL1Loss
 
@@ -37,7 +35,6 @@ parser.add_argument('--output-dir', type=str, default=None, help='output directo
 parser.add_argument('--snapshot', type=str, default=None, help='path to pre-trained model snapshot')
 parser.add_argument('--batch-size', type=int, default=32 * 4, metavar='N', help='batch size for training')
 parser.add_argument('--epochs', type=int, default=90, metavar='N', help='number of epochs to train for')
-parser.add_argument('--learning-rate', type=float, default=0.02, metavar='LR', help='learning rate')
 parser.add_argument('--weight-decay', type=float, default=1e-3, metavar='WD', help='weight decay')
 parser.add_argument('--loss-type', type=str, default='wbce', help='Type of classification loss to use (focal/bce/wbce)')
 parser.add_argument('--log-schedule', type=int, default=10, metavar='N',
@@ -60,7 +57,7 @@ parser.add_argument('--pretrained', type=str, default=None, help='path to datase
 args = parser.parse_args()
 
 
-def save_model(net, optimizer, epoch, save_path):
+def save_model(net, optimizer, save_path, name):
     if isinstance(net, torch.nn.parallel.DistributedDataParallel):
         net = net.module
     if dist.get_rank() == 0:
@@ -68,19 +65,16 @@ def save_model(net, optimizer, epoch, save_path):
         state = {'model': model_state_dict, 'optimizer': optimizer.state_dict()}
         # state = {'model': model_state_dict}
         assert os.path.exists(save_path)
-        model_path = os.path.join(save_path, 'ep%03d.pth' % epoch)
+        model_path = os.path.join(save_path, name)
         torch.save(state, model_path)
+
+
+def save_epoch(net, optimizer, epoch, save_path):
+    save_model(net, optimizer, save_path, 'ep%03d.pth' % epoch)
 
 
 def save_best(net, optimizer, save_path):
-    if isinstance(net, torch.nn.parallel.DistributedDataParallel):
-        net = net.module
-    if dist.get_rank() == 0:
-        model_state_dict = net.state_dict()
-        state = {'model': model_state_dict, 'optimizer': optimizer.state_dict()}
-        assert os.path.exists(save_path)
-        model_path = os.path.join(save_path, 'best.pth')
-        torch.save(state, model_path)
+    save_model(net, optimizer, save_path, 'best.pth')
 
 
 # validation function
@@ -109,7 +103,6 @@ def val(net, val_loader, f_log, gpu):
             val_f1 = f1_score((target > 0.5).astype(np.int64), (pred > 0.5).astype(np.int64), zero_division=1)
             epoch_acc.append(val_acc)
             epoch_f1.append(val_f1)
-
 
             # pred = torch.sigmoid(outputs['host']).detach().cpu().numpy().ravel()
             # target = host_mask.detach().cpu().numpy().ravel()
@@ -167,9 +160,8 @@ def val(net, val_loader, f_log, gpu):
     return avg_acc.cpu().item(), avg_f1.cpu().item()
 
 
-
 # training function
-def train(net, train_loader, criterions, optimizer, scheduler, f_log, epoch, gpu):
+def train(net, train_loader, criterions, optimizer, f_log, epoch, gpu):
     epoch_loss_seg, epoch_loss_vaf, epoch_loss_haf, epoch_loss, epoch_acc, epoch_f1 = list(), list(), list(), list(), list(), list()
     epoch_loss_host, epoch_host_acc, epoch_host_f1 = list(), list(), list()
     net.train()
@@ -182,8 +174,8 @@ def train(net, train_loader, criterions, optimizer, scheduler, f_log, epoch, gpu
             input_mask = input_mask.cuda(gpu, non_blocking=True)
             input_af = input_af.cuda(gpu, non_blocking=True)
             host_mask = host_mask.cuda(gpu, non_blocking=True)
-            # zero gradients before forward pass
 
+            # zero gradients before forward pass
             optimizer.zero_grad()
 
             # do the forward pass
@@ -191,8 +183,9 @@ def train(net, train_loader, criterions, optimizer, scheduler, f_log, epoch, gpu
 
             # calculate losses and metrics
             _mask = (input_mask != train_loader.dataset.ignore_label).float()
-            loss_seg = criterion_1(outputs['hm'] * _mask, input_mask * _mask) + criterion_2(torch.sigmoid(outputs['hm']),
-                                                                                            input_mask)
+            loss_seg = criterion_1(outputs['hm'] * _mask, input_mask * _mask) + criterion_2(
+                torch.sigmoid(outputs['hm']),
+                input_mask)
             # loss_host = criterion_1(outputs['host'] * _mask, host_mask * _mask) + criterion_2(torch.sigmoid(outputs['host']),
             #                                                                                 host_mask)
             loss_vaf = 0.5 * criterion_reg(outputs['vaf'], input_af[:, :2, :, :], input_mask)
@@ -202,7 +195,7 @@ def train(net, train_loader, criterions, optimizer, scheduler, f_log, epoch, gpu
             epoch_loss_vaf.append(loss_vaf.item())
             epoch_loss_haf.append(loss_haf.item())
             # epoch_loss_host.append(loss_host.item())
-            loss = loss_seg + loss_vaf + loss_haf # + loss_host
+            loss = loss_seg + loss_vaf + loss_haf  # + loss_host
             epoch_loss.append(loss.item())
 
             # Make training faster
@@ -240,7 +233,6 @@ def train(net, train_loader, criterions, optimizer, scheduler, f_log, epoch, gpu
                     epoch, (b_idx + 1) * args.batch_size, len(train_loader.dataset),
                            100. * (b_idx + 1) * args.batch_size / len(train_loader.dataset), loss.item(), train_f1))
 
-    scheduler.step()
     # now that the epoch is completed calculate statistics and store logs
     avg_loss_seg = mean(epoch_loss_seg)
     avg_loss_vaf = mean(epoch_loss_vaf)
@@ -277,100 +269,120 @@ def dist_print(*args, **kwargs):
 def worker(gpu, gpu_num, args):
     args.gpu = gpu
     args.rank = gpu
-    # print("Use GPU {} for training...".format(gpu))
     print("{} -> {}\t{}/{}".format(args.backend, args.dist_url, args.rank, gpu_num))
     dist.init_process_group(backend=args.backend, init_method=args.dist_url, world_size=gpu_num, rank=args.rank)
     dist_print(datetime.now().strftime('[%Y/%m/%d %H:%M:%S]') + ' start training...')
-
     f_log = open(os.path.join(args.output_dir, "logs.txt"), "w") if args.rank == 0 else None
-    # Model
-    if args.pretrained is not None:
-        print("Loading pretrained weights from file {} ...".format(args.pretrained))
-        encoder = Encoder(1000)
-        sd = torch.load(args.pretrained, map_location="cpu")
-        sd = sd['state_dict']
-        new_sd = {}
-        for k, v in sd.items():
-            new_sd[k.replace("module.", '')] = v
-        encoder.load_state_dict(new_sd)
-    else:
-        encoder = None
+
+    # TODO pretrained backbone
+    # if args.pretrained is not None:
+    #     print("Loading pretrained weights from file {} ...".format(args.pretrained))
+    #     encoder = Encoder(1000)
+    #     sd = torch.load(args.pretrained, map_location="cpu")
+    #     sd = sd['state_dict']
+    #     new_sd = {}
+    #     for k, v in sd.items():
+    #         new_sd[k.replace("module.", '')] = v
+    #     encoder.load_state_dict(new_sd)
+    # else:
+    #     encoder = None
 
     torch.set_num_threads(1)
-    # model = ResNetAF({"hm": 1, "haf": 1, "vaf": 2}, pretrained=True)
-    # model = ResFPNAF({"hm": 1, "haf": 1, "vaf": 2})
-    # model = DLAFPNAF({"hm": 1, "haf": 1, "vaf": 2}, stride=8)
-    model = ResFPNAF({"hm": 1, "haf": 1, "vaf": 2}, stride=8)
-
-    torch.cuda.set_device(args.gpu)
-
-    if args.snapshot is not None:
-        # model = D4UNet()
-        sd = torch.load(args.snapshot)
-        sd = sd['model']
-        new_sd = {}
-        for k, v in sd.items():
-            new_sd[k.replace("module.", '')] = v
-        model.load_state_dict(new_sd, strict=True)
-
-    model.cuda(args.gpu)
-    model = nn.SyncBatchNorm.convert_sync_batchnorm(model)
-    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
-    print("Model ready...")
-    dist_print(model)
+    model = create_model(args)
 
     # Loss && Optimizer
     # BCE(Focal) loss applied to each pixel individually
-    if args.loss_type == 'focal':
+    if global_config.basic_loss == 'focal':
         criterion_1 = FocalLoss(gamma=2.0, alpha=0.25, size_average=True)
-    elif args.loss_type == 'bce':
-        ## BCE weight
+    elif global_config.basic_loss == 'bce':
         criterion_1 = torch.nn.BCEWithLogitsLoss()
-    elif args.loss_type == 'wbce':
-        ## BCE weight
+    elif global_config.basic_loss == 'wbce':
+        # TODO Maybe greater?
         criterion_1 = torch.nn.BCEWithLogitsLoss(pos_weight=torch.tensor([9.6]).cuda())
     else:
         print("No such loss: {}".format(args.loss_type))
         exit()
+
     criterion_1.cuda(args.gpu)
     criterion_2 = IoULoss().cuda(args.gpu)
     criterion_reg = RegL1Loss().cuda(args.gpu)
-    optimizer = optim.Adam(model.parameters(), lr=1e-3, weight_decay=args.weight_decay)
-    # optimizer = optim.SGD(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
+
+    warmup_optimizer = global_config.warmup_optimizer(model.parameters(),
+                                                      weight_decay=args.weight_decay,
+                                                      **global_config.warmup_optimizer_kwargs)
+
+    optimizer = global_config.optimizer(model.parameters(), lr=1e-3, weight_decay=args.weight_decay,
+                                        **global_config.optimizer_kwargs)
+
     dist_print("Optimizer: {}".format(optimizer.__class__))
+    dist_print("Warmup Optimizer: {}".format(warmup_optimizer.__class__))
+    dist_print("Loss : {}, {}, {}".format(criterion_1.__class__, criterion_2.__class__, criterion_reg.__class__))
     # Loss && Optimizer ready
 
-    # TODO warmup
-    scheduler = CosineAnnealingLR(optimizer, args.epochs)
-    # scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=15, gamma=0.2)
-    import torchvision.transforms as transforms
-    augs = transforms.Compose([
-        transforms.RandomGrayscale(),
-        transforms.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.05),
-        transforms.RandomErasing(p=0.1),
-    ])
-    train_dataset = HMLane(args.dataset_dir, 'train', "edge", args.random_transforms, img_transforms=None)
+    scheduler = global_config.scheduler(optimizer, args.epochs)
+    train_dataset = HMLane(args.dataset_dir, 'train', args.random_transforms, img_transforms=global_config.augs)
     train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
     kwargs = {'batch_size': args.batch_size // gpu_num, 'num_workers': args.workers,
               'sampler': train_sampler}
     train_loader = DataLoader(train_dataset, **kwargs, pin_memory=True)
 
-    val_dataset = HMLane(args.dataset_dir, 'val', "edge", False)
+    val_dataset = HMLane(args.dataset_dir, 'val', False, None)
     val_sampler = torch.utils.data.distributed.DistributedSampler(val_dataset, shuffle=False)
     kwargs = {'batch_size': args.batch_size // gpu_num // 2, 'num_workers': args.workers, 'sampler': val_sampler}
     val_loader = DataLoader(val_dataset, **kwargs)
 
     # TODO resume && finetune
+
+    init_epoch = 0
+    if global_config.use_warmup:
+        for e in range(global_config.warmup_epoch):
+            dist_print("Warmup epoch {}".format(e))
+            train_sampler.set_epoch(e)
+            train(model, train_loader, [criterion_1, criterion_2, criterion_reg], warmup_optimizer, f_log, e,
+                  args.gpu)
+
+            for param_group in warmup_optimizer.param_groups:
+                param_group['lr'] += global_config.warmup_step
+            val(model, val_loader, f_log, args.gpu)
+        init_epoch = global_config.warmup_epoch
+
     best_f1 = 0.0
     for epoch in range(args.epochs):
-        train_sampler.set_epoch(epoch)
-        train(model, train_loader, [criterion_1, criterion_2, criterion_reg], optimizer, scheduler, f_log, epoch,
-              args.gpu)
+        train_sampler.set_epoch(epoch + init_epoch)
+        train(model, train_loader,
+              [criterion_1, criterion_2, criterion_reg],
+              optimizer, f_log, epoch, args.gpu)
+        scheduler.step()
         acc, f1 = val(model, val_loader, f_log, args.gpu)
-        save_model(model, optimizer, epoch, args.output_dir)
-        if f1 > best_f1:
-            best_f1 = f1
-            save_best(model, optimizer, args.output_dir)
+        # Save dist space by 30%
+        if epoch > 30:
+            save_epoch(model, optimizer, epoch, args.output_dir)
+            if f1 > best_f1:
+                best_f1 = f1
+                save_best(model, optimizer, args.output_dir)
+
+
+def create_model(args, config):
+    model = config.model(config.heads, stride=config.stride)
+    torch.cuda.set_device(args.gpu)
+    if args.snapshot is not None:
+        load_checkpoint(args.snapshot, model)
+    model.cuda(args.gpu)
+    if config.use_sync_bn:
+        model = nn.SyncBatchNorm.convert_sync_batchnorm(model)
+    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
+    dist_print(model)
+    return model
+
+
+def load_checkpoint(checkpoint_path, model):
+    sd = torch.load(checkpoint_path)
+    sd = sd['model']
+    new_sd = {}
+    # TODO maybe trash code
+    for k, v in sd.items():
+        new_sd[k.replace("module.", '')] = v
+    model.load_state_dict(new_sd, strict=True)
 
 
 def mp_train():

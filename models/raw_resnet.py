@@ -58,6 +58,7 @@ class FPNFusion(nn.Module):
         if self._mode == "concat":
             if len(self._names) == 2:
                 self._cv = nn.Sequential(
+                    nn.Dropout2d(p=0.2),
                     nn.Conv2d(channels * 2, channels, kernel_size=5, stride=1, padding=2),
                     nn.BatchNorm2d(channels),
                     nn.ReLU(),
@@ -67,6 +68,7 @@ class FPNFusion(nn.Module):
                 )
             if len(self._names) == 3:
                 self._cv0 = nn.Sequential(
+                    nn.Dropout2d(p=0.2),
                     nn.Conv2d(channels * 2, channels, kernel_size=5, stride=1, padding=2),
                     nn.BatchNorm2d(channels),
                     nn.ReLU(),
@@ -75,6 +77,7 @@ class FPNFusion(nn.Module):
                     nn.ReLU(),
                 )
                 self._cv1 = nn.Sequential(
+                    nn.Dropout2d(p=0.2),
                     nn.Conv2d(channels * 2, channels, kernel_size=5, stride=1, padding=2),
                     nn.BatchNorm2d(channels),
                     nn.ReLU(),
@@ -84,6 +87,7 @@ class FPNFusion(nn.Module):
                 )
             if len(self._names) == 4:
                 self._cv0 = nn.Sequential(
+                    nn.Dropout2d(p=0.2),
                     nn.Conv2d(channels * 2, channels, kernel_size=5, stride=1, padding=2),
                     nn.BatchNorm2d(channels),
                     nn.ReLU(),
@@ -92,6 +96,7 @@ class FPNFusion(nn.Module):
                     nn.ReLU(),
                 )
                 self._cv1 = nn.Sequential(
+                    nn.Dropout2d(p=0.2),
                     nn.Conv2d(channels * 2, channels, kernel_size=5, stride=1, padding=2),
                     nn.BatchNorm2d(channels),
                     nn.ReLU(),
@@ -100,6 +105,7 @@ class FPNFusion(nn.Module):
                     nn.ReLU(),
                 )
                 self._cv2 = nn.Sequential(
+                    nn.Dropout2d(p=0.2),
                     nn.Conv2d(channels * 2, channels, kernel_size=5, stride=1, padding=2),
                     nn.BatchNorm2d(channels),
                     nn.ReLU(),
