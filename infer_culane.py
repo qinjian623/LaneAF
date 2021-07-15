@@ -111,7 +111,7 @@ def test(net):
             # decode AFs to get lane instances
             torch.cuda.synchronize()
             s = time.time()
-            seg_out = decodeAFs(mask_out[:, :, 0], vaf_out, haf_out, fg_thresh=60, err_thresh=3)
+            seg_out = decodeAFs(mask_out[:, :, 0], vaf_out, haf_out, fg_thresh=128, err_thresh=3)
 
             torch.cuda.synchronize()
             e = time.time()

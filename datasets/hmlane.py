@@ -113,12 +113,12 @@ class HMLane(Dataset):
 
         if self.random_transforms:
             self.transforms = transforms.Compose([
+                tf.GroupRandomRotation(degree=(-40, 40), interpolation=(cv2.INTER_LINEAR, cv2.INTER_NEAREST),
+                                       padding=(global_config.mean, (self.ignore_label,))),
                 tf.GroupRandomScale(size=self.training_scales_range,
                                     interpolation=(cv2.INTER_LINEAR, cv2.INTER_NEAREST)),
                 tf.GroupRandomCropRatio(size=global_config.input_size),
                 tf.GroupRandomHorizontalFlip(),
-                tf.GroupRandomRotation(degree=(-10, 10), interpolation=(cv2.INTER_LINEAR, cv2.INTER_NEAREST),
-                                       padding=(global_config.mean, (self.ignore_label,))),
                 tf.GroupNormalize(mean=(global_config.mean, (0,)), std=(global_config.std, (1,))),
             ])
         else:
@@ -170,6 +170,10 @@ class HMLane(Dataset):
             # host = cv2.imread(self.host_list[idx], cv2.IMREAD_UNCHANGED)  # (H, W)
 
         seg = np.tile(seg[..., np.newaxis], (1, 1, 3))  # (H, W, 3)
+        # TODO culane special
+        if img.shape == (590, 1640, 3):
+            img = img[:, 290:-290, :]
+            seg = seg[:, 290:-290, :]
 
         img = cv2.resize(img, global_config.resize_size, interpolation=cv2.INTER_LINEAR)
         seg = cv2.resize(seg, global_config.resize_size, interpolation=cv2.INTER_NEAREST)

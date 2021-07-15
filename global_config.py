@@ -11,27 +11,26 @@ input_size = (512, 512)  # W, H
 mean = [0.485, 0.456, 0.406]  # [103.939, 116.779, 123.68]
 std = [0.229, 0.224, 0.225]  # [1, 1, 1]
 
-stride = 8
 
 heads = {'hm': 1, 'vaf': 2, 'haf': 1}
 stride = 8
 model = DLAFPNAF
 optimizer = Adam
-optimizer_kwargs = {
-
-}
+optimizer_kwargs = {}
 
 warmup_optimizer = Adam
 warmup_optimizer_kwargs = {
-    "lr": 1e-4,
+    "lr": 5e-5,
     # "momentum": 0.9
 }
 warmup_epoch = 5
-warmup_step = (1e-3 - 1e-4)/warmup_epoch
+warmup_step = (1e-3 - 5e-5)/warmup_epoch
 
 use_warmup = True
 use_sync_bn = True
 use_half_infer = True
+# use_half_training = True
+
 scheduler = CosineAnnealingLR
 
 augs = transforms.Compose([

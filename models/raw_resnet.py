@@ -13,17 +13,19 @@ class Dummy(nn.Module):
         return x
 
 
-class AFHeadRes(nn.Module):
+class AFHead(nn.Module):
     def __init__(self, feat_num, heads):
         super().__init__()
         self._heads = heads
         self._fn = feat_num
 
         self._dapter = nn.Sequential(
-            nn.Conv2d(feat_num, 256, kernel_size=5, stride=1, padding=2),
+            nn.Conv2d(feat_num, 256, kernel_size=5, stride=1, padding=2, bias=False),
+            # nn.Conv2d(feat_num, 256, kernel_size=5, stride=1, padding=2),
             nn.BatchNorm2d(256),
             nn.ReLU(),
-            nn.Conv2d(256, 64, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(256, 64, kernel_size=3, stride=1, padding=1, bias=False),
+            # nn.Conv2d(256, 64, kernel_size=3, stride=1, padding=1),
             nn.BatchNorm2d(64),
             nn.ReLU(),
         )
@@ -53,69 +55,100 @@ class FPNFusion(nn.Module):
         assert mode in ["add", "concat"]
         self._names = names
 
-        self._up = nn.Upsample(scale_factor=2)
+        # self._up = nn.Upsample(scale_factor=2, align_corners=False, mode="bilinear")
+        self._up0 = nn.ConvTranspose2d(
+            channels,
+            channels,
+            kernel_size=4,
+            stride=2,
+            padding=1)
+        self._up1 = nn.ConvTranspose2d(
+            channels,
+            channels,
+            kernel_size=4,
+            stride=2,
+            padding=1)
+        self._up2 = nn.ConvTranspose2d(
+            channels,
+            channels,
+            kernel_size=4,
+            stride=2,
+            padding=1)
+
         self._mode = mode
         if self._mode == "concat":
             if len(self._names) == 2:
                 self._cv = nn.Sequential(
                     nn.Dropout2d(p=0.2),
-                    nn.Conv2d(channels * 2, channels, kernel_size=5, stride=1, padding=2),
+                    nn.Conv2d(channels * 2, channels, kernel_size=5, stride=1, padding=2, bias=False),
+                    # nn.Conv2d(channels * 2, channels, kernel_size=5, stride=1, padding=2),
                     nn.BatchNorm2d(channels),
                     nn.ReLU(),
-                    nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1),
+                    nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1, bias=False),
+                    # nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1),
                     nn.BatchNorm2d(channels),
                     nn.ReLU(),
                 )
             if len(self._names) == 3:
                 self._cv0 = nn.Sequential(
                     nn.Dropout2d(p=0.2),
-                    nn.Conv2d(channels * 2, channels, kernel_size=5, stride=1, padding=2),
+                    nn.Conv2d(channels * 2, channels, kernel_size=5, stride=1, padding=2, bias=False),
+                    # nn.Conv2d(channels * 2, channels, kernel_size=5, stride=1, padding=2),
                     nn.BatchNorm2d(channels),
                     nn.ReLU(),
-                    nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1),
+                    nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1, bias=False),
+                    # nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1),
                     nn.BatchNorm2d(channels),
                     nn.ReLU(),
                 )
                 self._cv1 = nn.Sequential(
                     nn.Dropout2d(p=0.2),
-                    nn.Conv2d(channels * 2, channels, kernel_size=5, stride=1, padding=2),
+                    nn.Conv2d(channels * 2, channels, kernel_size=5, stride=1, padding=2, bias=False),
+                    # nn.Conv2d(channels * 2, channels, kernel_size=5, stride=1, padding=2),
                     nn.BatchNorm2d(channels),
                     nn.ReLU(),
-                    nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1),
+                    nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1, bias=False),
+                    # nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1),
                     nn.BatchNorm2d(channels),
                     nn.ReLU(),
                 )
             if len(self._names) == 4:
                 self._cv0 = nn.Sequential(
                     nn.Dropout2d(p=0.2),
-                    nn.Conv2d(channels * 2, channels, kernel_size=5, stride=1, padding=2),
+                    nn.Conv2d(channels * 2, channels, kernel_size=5, stride=1, padding=2, bias=False),
+                    # nn.Conv2d(channels * 2, channels, kernel_size=5, stride=1, padding=2),
                     nn.BatchNorm2d(channels),
                     nn.ReLU(),
-                    nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1),
+                    nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1, bias=False),
+                    # nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1),
                     nn.BatchNorm2d(channels),
                     nn.ReLU(),
                 )
                 self._cv1 = nn.Sequential(
                     nn.Dropout2d(p=0.2),
-                    nn.Conv2d(channels * 2, channels, kernel_size=5, stride=1, padding=2),
+                    nn.Conv2d(channels * 2, channels, kernel_size=5, stride=1, padding=2, bias=False),
+                    # nn.Conv2d(channels * 2, channels, kernel_size=5, stride=1, padding=2),
                     nn.BatchNorm2d(channels),
                     nn.ReLU(),
-                    nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1),
+                    nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1, bias=False),
+                    # nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1),
                     nn.BatchNorm2d(channels),
                     nn.ReLU(),
                 )
                 self._cv2 = nn.Sequential(
                     nn.Dropout2d(p=0.2),
-                    nn.Conv2d(channels * 2, channels, kernel_size=5, stride=1, padding=2),
+                    nn.Conv2d(channels * 2, channels, kernel_size=5, stride=1, padding=2, bias=False),
+                    # nn.Conv2d(channels * 2, channels, kernel_size=5, stride=1, padding=2),
                     nn.BatchNorm2d(channels),
                     nn.ReLU(),
-                    nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1),
+                    nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1, bias=False),
+                    # nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1),
                     nn.BatchNorm2d(channels),
                     nn.ReLU(),
                 )
 
         for m in self.modules():
-            if isinstance(m, nn.Conv2d):
+            if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
             elif isinstance(m, (nn.BatchNorm2d, nn.GroupNorm)):
                 nn.init.constant_(m.weight, 1)
@@ -123,41 +156,41 @@ class FPNFusion(nn.Module):
 
     def forward(self, xs):
         if len(self._names) == 2:
-            x0 = self._up(xs[self._names[0]])
+            x0 = self._up0(xs[self._names[0]])
             x1 = xs[self._names[1]]
             if self._mode == "concat":
                 out = self._cv(torch.cat([x0, x1], dim=1))
             else:
                 out = x0 + x1
         if len(self._names) == 3:
-            x0 = self._up(xs[self._names[0]])
+            x0 = self._up0(xs[self._names[0]])
             x1 = xs[self._names[1]]
             if self._mode == "concat":
                 out = self._cv0(torch.cat([x0, x1], dim=1))
             else:
                 out = x0 + x1
-            x0 = self._up(out)
+            x0 = self._up1(out)
             x1 = xs[self._names[2]]
             if self._mode == "concat":
                 out = self._cv1(torch.cat([x0, x1], dim=1))
             else:
                 out = x0 + x1
         if len(self._names) == 4:
-            x0 = self._up(xs[self._names[0]])
+            x0 = self._up0(xs[self._names[0]])
             x1 = xs[self._names[1]]
             if self._mode == "concat":
                 out = self._cv0(torch.cat([x0, x1], dim=1))
             else:
                 out = x0 + x1
 
-            x0 = self._up(out)
+            x0 = self._up1(out)
             x1 = xs[self._names[2]]
             if self._mode == "concat":
                 out = self._cv1(torch.cat([x0, x1], dim=1))
             else:
                 out = x0 + x1
 
-            x0 = self._up(out)
+            x0 = self._up2(out)
             x1 = xs[self._names[3]]
             if self._mode == "concat":
                 out = self._cv2(torch.cat([x0, x1], dim=1))
@@ -180,7 +213,7 @@ class ResNetAF(nn.Module):
             bb.layer3,
             bb.layer4
         )
-        self.head = AFHeadRes(512, heads=heads)
+        self.head = AFHead(512, heads=heads)
 
     def forward(self, x):
         feat = self.bb(x)
@@ -201,7 +234,7 @@ class FPNAF(nn.Module):
         elif stride == 4:
             self.fpn_neck = FPNFusion(['s32', 's16', 's8', 's4'], 256, mode='concat')
 
-        self.head = AFHeadRes(256, heads=heads)
+        self.head = AFHead(256, heads=heads)
         self.fpn = self.__init_fpn__(stride)
         if instance_norm:
             self.inn = nn.InstanceNorm2d(3, affine=True)
@@ -225,7 +258,12 @@ class DLAFPNAF(FPNAF):
 
     def __init_fpn__(self, stride):
         bb = timm.create_model('dla34', pretrained=True)
-        # bb.load_state_dict(torch.load("dla34.bb.pth"))
+        sd = torch.load("/home/qinjian/examples-master/imagenet/best_dla_384.pth.tar", map_location="cpu")
+        sd = sd['state_dict']
+        new_sd = {}
+        for k, v in sd.items():
+            new_sd[k.replace("module.", '')] = v
+        bb.load_state_dict(new_sd)
         print(bb.base_layer[0].weight.max())
         # exit()
         if stride == 4:

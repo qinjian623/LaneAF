@@ -9,22 +9,18 @@ import numpy as np
 import torch.distributed as dist
 import torch.multiprocessing as mp
 import torch.nn as nn
-from torch.optim.lr_scheduler import CosineAnnealingLR
 from tqdm import tqdm
-
-import global_config
-from datasets.hmlane import HMLane
-from models.erf.encoder import ERFNet as Encoder
-
-matplotlib.use('Agg')
-from sklearn.metrics import accuracy_score, f1_score
-
 import torch
 from torch.utils.data import DataLoader
 
-from models.loss import FocalLoss, IoULoss, RegL1Loss
+import global_config
+from datasets.hmlane import HMLane
 
+matplotlib.use('Agg')
+from sklearn.metrics import accuracy_score, f1_score
+from models.loss import FocalLoss, IoULoss, RegL1Loss
 import cv2
+
 
 cv2.setNumThreads(0)
 cv2.ocl.setUseOpenCL(False)
@@ -34,7 +30,7 @@ parser.add_argument('--dataset-dir', type=str, default=None, help='path to datas
 parser.add_argument('--output-dir', type=str, default=None, help='output directory for model and logs')
 parser.add_argument('--snapshot', type=str, default=None, help='path to pre-trained model snapshot')
 parser.add_argument('--batch-size', type=int, default=32 * 4, metavar='N', help='batch size for training')
-parser.add_argument('--epochs', type=int, default=90, metavar='N', help='number of epochs to train for')
+parser.add_argument('--epochs', type=int, default=200, metavar='N', help='number of epochs to train for')
 parser.add_argument('--weight-decay', type=float, default=1e-3, metavar='WD', help='weight decay')
 parser.add_argument('--loss-type', type=str, default='wbce', help='Type of classification loss to use (focal/bce/wbce)')
 parser.add_argument('--log-schedule', type=int, default=10, metavar='N',
@@ -54,6 +50,7 @@ parser.add_argument('--dist-url', default='tcp://127.0.0.1:8848', type=str,
 parser.add_argument('--backend', default='nccl', type=str,
                     help='distributed backend')
 parser.add_argument('--pretrained', type=str, default=None, help='path to dataset')
+parser.add_argument('--checkpoint', type=str, default=None, help='path to checkpoint')
 args = parser.parse_args()
 
 
@@ -67,6 +64,12 @@ def save_model(net, optimizer, save_path, name):
         assert os.path.exists(save_path)
         model_path = os.path.join(save_path, name)
         torch.save(state, model_path)
+
+
+def load_checkpoint(checkpoint, net, optimizer):
+    sd = torch.load(checkpoint)
+    net.load_state_dict(sd['model'])
+    optimizer.load_state_dict(sd['optimizer'])
 
 
 def save_epoch(net, optimizer, epoch, save_path):
@@ -288,7 +291,7 @@ def worker(gpu, gpu_num, args):
     #     encoder = None
 
     torch.set_num_threads(1)
-    model = create_model(args)
+    model = create_model(args, global_config)
 
     # Loss && Optimizer
     # BCE(Focal) loss applied to each pixel individually
@@ -298,7 +301,7 @@ def worker(gpu, gpu_num, args):
         criterion_1 = torch.nn.BCEWithLogitsLoss()
     elif global_config.basic_loss == 'wbce':
         # TODO Maybe greater?
-        criterion_1 = torch.nn.BCEWithLogitsLoss(pos_weight=torch.tensor([9.6]).cuda())
+        criterion_1 = torch.nn.BCEWithLogitsLoss(pos_weight=torch.tensor([10.0]).cuda())
     else:
         print("No such loss: {}".format(args.loss_type))
         exit()
@@ -307,12 +310,16 @@ def worker(gpu, gpu_num, args):
     criterion_2 = IoULoss().cuda(args.gpu)
     criterion_reg = RegL1Loss().cuda(args.gpu)
 
-    warmup_optimizer = global_config.warmup_optimizer(model.parameters(),
-                                                      weight_decay=args.weight_decay,
-                                                      **global_config.warmup_optimizer_kwargs)
+    warmup_optimizer = global_config.warmup_optimizer(
+        model.parameters(),
+        weight_decay=args.weight_decay,
+        **global_config.warmup_optimizer_kwargs)
 
-    optimizer = global_config.optimizer(model.parameters(), lr=1e-3, weight_decay=args.weight_decay,
-                                        **global_config.optimizer_kwargs)
+    optimizer = global_config.optimizer(
+        model.parameters(),
+        lr=1e-3,
+        weight_decay=args.weight_decay,
+        **global_config.optimizer_kwargs)
 
     dist_print("Optimizer: {}".format(optimizer.__class__))
     dist_print("Warmup Optimizer: {}".format(warmup_optimizer.__class__))
@@ -332,19 +339,21 @@ def worker(gpu, gpu_num, args):
     val_loader = DataLoader(val_dataset, **kwargs)
 
     # TODO resume && finetune
-
     init_epoch = 0
-    if global_config.use_warmup:
-        for e in range(global_config.warmup_epoch):
-            dist_print("Warmup epoch {}".format(e))
-            train_sampler.set_epoch(e)
-            train(model, train_loader, [criterion_1, criterion_2, criterion_reg], warmup_optimizer, f_log, e,
-                  args.gpu)
+    if args.checkpoint is not None:
+        load_checkpoint(args.checkpoint, model, optimizer)
+    else:
+        if global_config.use_warmup:
+            for e in range(global_config.warmup_epoch):
+                dist_print("Warmup epoch {}".format(e))
+                train_sampler.set_epoch(e)
+                train(model, train_loader, [criterion_1, criterion_2, criterion_reg], warmup_optimizer, f_log, e,
+                      args.gpu)
 
-            for param_group in warmup_optimizer.param_groups:
-                param_group['lr'] += global_config.warmup_step
-            val(model, val_loader, f_log, args.gpu)
-        init_epoch = global_config.warmup_epoch
+                for param_group in warmup_optimizer.param_groups:
+                    param_group['lr'] += global_config.warmup_step
+                val(model, val_loader, f_log, args.gpu)
+            init_epoch = global_config.warmup_epoch
 
     best_f1 = 0.0
     for epoch in range(args.epochs):
@@ -365,8 +374,8 @@ def worker(gpu, gpu_num, args):
 def create_model(args, config):
     model = config.model(config.heads, stride=config.stride)
     torch.cuda.set_device(args.gpu)
-    if args.snapshot is not None:
-        load_checkpoint(args.snapshot, model)
+    # if args.snapshot is not None:
+    #     load_checkpoint(args.snapshot, model)
     model.cuda(args.gpu)
     if config.use_sync_bn:
         model = nn.SyncBatchNorm.convert_sync_batchnorm(model)

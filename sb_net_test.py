@@ -27,6 +27,7 @@ class SmallNet(nn.Module):
 
 
 def main():
+    nn.Transformer
     data = torch.randn((1, 3 + 16, 576, 1024)).cuda()
     sn = SmallNet().cuda()
     torch.cuda.synchronize()
